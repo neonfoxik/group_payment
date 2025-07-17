@@ -20,6 +20,18 @@ class User(models.Model):
         null=True,
         blank=True,
     )
+    email = models.EmailField(
+        max_length=255,
+        verbose_name='Email',
+        null=True,
+        blank=True,
+    )
+    last_operation_id = models.CharField(
+        max_length=128,
+        verbose_name='Последний operationId оплаты',
+        null=True,
+        blank=True,
+    )
     subscription_end = models.DateTimeField(null=True, blank=True, verbose_name='Дата окончания подписки')
     is_subscribed = models.BooleanField(default=False, verbose_name='Активна ли подписка')
 

@@ -28,8 +28,9 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 OWNER_ID = os.getenv('OWNER_ID')
 HOOK = os.getenv('HOOK')
 TOCHKA_API_TOKEN = os.getenv('TOCHKA_API_TOKEN')
-TOCHKA_ACCOUNT_ID = os.getenv('TOCHKA_ACCOUNT_ID')
 INVITE_LINK = os.getenv('INVITE_LINK')
+TOCHKA_CUSTOMER_CODE = os.getenv('TOCHKA_CUSTOMER_CODE')  # Укажите ваш customerCode клиента Точка
+TOCHKA_MERCHANT_ID = os.getenv('TOCHKA_MERCHANT_ID')  # Укажите ваш merchantId клиента Точка
 
 # Application definition
 BOT_COMMANDS = [

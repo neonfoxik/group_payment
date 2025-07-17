@@ -20,4 +20,25 @@ INVITE_LINK =
 HOOK = 
 LOCAL = 
 TOCHKA_API_TOKEN=
-TOCHKA_ACCOUNT_ID=ваш_id_счета
+TOCHKA_ACCOUNT_ID = 
+TOCHKA_CUSTOMER_CODE =
+
+## Интеграция с API Точка
+
+В `.env` должны быть следующие переменные:
+
+```
+TOCHKA_API_TOKEN=ваш_токен_точка
+TOCHKA_CUSTOMER_CODE=ваш_customerCode_точка
+INVITE_LINK=ваша_ссылка_на_группу
+HOOK=ваш_публичный_адрес_бота (например, https://example.com)
+```
+
+- `TOCHKA_API_TOKEN` — Bearer-токен для API Точка
+- `TOCHKA_CUSTOMER_CODE` — ваш уникальный customerCode (узнайте в личном кабинете Точка)
+- `INVITE_LINK` — ссылка на вступление в группу Telegram
+- `HOOK` — публичный адрес, на который Точка будет отправлять колбеки (например, https://ваш_домен/bot/tochka_payment_webhook/)
+
+**Важно:**
+- Проверьте, что вебхук доступен из интернета (используйте ngrok или реальный сервер)
+- После успешной оплаты пользователю автоматически отправится ссылка на вступление в группу

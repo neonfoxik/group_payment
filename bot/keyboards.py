@@ -37,3 +37,10 @@ UNIVERSAL_VIDEO_MARKUP.add(btn1)
 ADMIN_MARKUP = InlineKeyboardMarkup()
 btn1 = InlineKeyboardButton("Рассылка", callback_data="newsletter")
 ADMIN_MARKUP.add(btn1)
+
+
+def main_inline_markup():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Оплатить подписку", callback_data="pay_subscription"))
+    markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+    return markup

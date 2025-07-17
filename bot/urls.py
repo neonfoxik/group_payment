@@ -8,4 +8,5 @@ urlpatterns = [
     path('set_webhook/', views.set_webhook, name="set_webhook"),
     path('status/', views.status, name="status"),
     path('payment_webhook/', views.payment_webhook, name="payment_webhook"),
+    path('tochka_payment_webhook/', views.tochka_payment_webhook, name="tochka_payment_webhook"),
 ]
