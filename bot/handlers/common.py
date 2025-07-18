@@ -93,8 +93,18 @@ def create_tochka_payment_link_with_receipt(user_id, amount, purpose, email):
 
 
 def send_invite_link(user_id):
-    invite_link = settings.INVITE_LINK
-    bot.send_message(user_id, THANKS_PAYMENT.format(invite_link=invite_link))
+    from django.conf import settings
+    group_id = settings.GROUP_ID
+    try:
+        invite = bot.create_chat_invite_link(group_id, member_limit=1)
+        invite_link = invite.invite_link
+    except Exception as e:
+        print(f'Ошибка при создании инвайт-ссылки: {e}')
+        invite_link = None
+    if invite_link:
+        bot.send_message(user_id, f"Спасибо за оплату! Вот ваша ссылка для вступления: {invite_link}")
+    else:
+        bot.send_message(user_id, "Ошибка при создании ссылки для вступления. Обратитесь к администратору.")
 
 
 

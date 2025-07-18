@@ -32,6 +32,7 @@ INVITE_LINK = os.getenv('INVITE_LINK')
 TOCHKA_CUSTOMER_CODE = os.getenv('TOCHKA_CUSTOMER_CODE')  # Укажите ваш customerCode клиента Точка
 TOCHKA_MERCHANT_ID = os.getenv('TOCHKA_MERCHANT_ID')  # Укажите ваш merchantId клиента Точка
 TOCHKA_CLIENT_ID = os.getenv('TOCHKA_CLIENT_ID')  # Укажите ваш client_id приложения Точка
+GROUP_ID = int(os.getenv('GROUP_ID'))  # ID вашей Telegram-группы
 
 # Application definition
 BOT_COMMANDS = [
