@@ -231,6 +231,19 @@ def check_payment_callback(call: CallbackQuery):
             user.subscription_end = now + timezone.timedelta(days=30)
         user.is_subscribed = True
         user.save()
+        # Проверяем, состоит ли пользователь в группе
+        from django.conf import settings
+        group_id = settings.GROUP_ID
+        try:
+            member = bot.get_chat_member(group_id, call.from_user.id)
+            if member.status not in ["left", "kicked"]:
+                # Уже в группе
+                date = user.subscription_end.strftime('%d.%m.%Y')
+                bot.send_message(call.from_user.id, f"Ваша подписка продлена до {date}.")
+                bot.answer_callback_query(call.id, "Подписка продлена! Вы уже в группе.", show_alert=True)
+                return
+        except Exception as e:
+            print(f'Ошибка при проверке членства в группе: {e}')
         # Разбаниваем пользователя и отправляем ссылку
         try:
             from bot.management.commands.ban_expired import GROUP_ID
