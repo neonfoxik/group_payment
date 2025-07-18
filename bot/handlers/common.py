@@ -200,11 +200,13 @@ def pay_subscription_callback(call: CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_payment")
 def check_payment_callback(call: CallbackQuery):
+    from django.conf import settings
     from bot.models import User
     from django.utils import timezone
+    bot.answer_callback_query(call.id)  # Сразу отвечаем Telegram, чтобы не было ошибки timeout
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     if not user or not user.operation_ids:
-        bot.answer_callback_query(call.id, "Нет данных для проверки оплаты.", show_alert=True)
+        bot.send_message(call.from_user.id, "Нет данных для проверки оплаты.")
         return
     approved_id = None
     for operation_id in list(user.operation_ids):  # копия списка для безопасного удаления
@@ -232,7 +234,6 @@ def check_payment_callback(call: CallbackQuery):
         user.is_subscribed = True
         user.save()
         # Проверяем, состоит ли пользователь в группе
-        from django.conf import settings
         group_id = settings.GROUP_ID
         try:
             member = bot.get_chat_member(group_id, call.from_user.id)
@@ -240,7 +241,6 @@ def check_payment_callback(call: CallbackQuery):
                 # Уже в группе
                 date = user.subscription_end.strftime('%d.%m.%Y')
                 bot.send_message(call.from_user.id, f"Ваша подписка продлена до {date}.")
-                bot.answer_callback_query(call.id, "Подписка продлена! Вы уже в группе.", show_alert=True)
                 return
         except Exception as e:
             print(f'Ошибка при проверке членства в группе: {e}')
@@ -251,6 +251,6 @@ def check_payment_callback(call: CallbackQuery):
         except Exception as e:
             print(f'Ошибка при разбане пользователя {call.from_user.id}: {e}')
         send_invite_link(call.from_user.id)
-        bot.answer_callback_query(call.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.", show_alert=True)
+        bot.send_message(call.from_user.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.")
     else:
-        bot.answer_callback_query(call.id, "Оплата не подтверждена по ни одному из платежей.", show_alert=True) 
+        bot.send_message(call.from_user.id, "Оплата не подтверждена по ни одному из платежей.") 
