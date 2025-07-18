@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 from bot.models import User
 from django.utils import timezone
-from bot import bot
+from bot.bot_instance import bot
 from datetime import timedelta
 import logging
 from django.conf import settings
