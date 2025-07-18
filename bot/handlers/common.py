@@ -241,4 +241,3 @@ def check_payment_callback(call: CallbackQuery):
         bot.answer_callback_query(call.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.", show_alert=True)
     else:
         bot.answer_callback_query(call.id, "Оплата не подтверждена по ни одному из платежей.", show_alert=True) 
-    
