@@ -81,42 +81,40 @@ def payment_webhook(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(e)}, status=500)
 
 @csrf_exempt
-@require_http_methods(["POST", "GET"])
+@require_http_methods(["POST"])
 def tochka_payment_webhook(request: HttpRequest) -> JsonResponse:
-    if request.method == "GET":
-        print('Получен GET-запрос на tochka_payment_webhook')
-        return JsonResponse({"status": "ok (GET-запрос, оплата не подтверждена)"}, status=200)
     try:
-        print('Получен вебхук от Точки')
-        user_id = request.GET.get('user_id')
         data = json.loads(request.body.decode('utf-8'))
         operation_id = data.get('operationId')
-        print(f'user_id из запроса: {user_id}, operation_id из запроса: {operation_id}')
-        if not operation_id or not user_id:
-            print('operationId или user_id отсутствует в запросе')
-            return JsonResponse({"error": "operationId or user_id missing"}, status=400)
-        api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
-        headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
-        resp = requests.get(api_url, headers=headers)
-        print('tochka_payment_webhook resp:', resp.text)  # Логируем ответ от Точки
-        if resp.status_code == 200:
-            data = resp.json().get('Data', {})
-            operation_list = data.get('Operation')
-            if isinstance(operation_list, list) and operation_list:
-                status = operation_list[0].get('status')
-            else:
-                status = data.get('status')
-            print(f'Статус оплаты: {status}')
-            if status == 'APPROVED':
-                print(f'Оплата подтверждена, отправляю ссылку пользователю {user_id}')
+        status = data.get('status')
+        user_id = request.GET.get('user_id')
+        print(f'Webhook: operation_id={operation_id}, status={status}, user_id={user_id}')
+        if not user_id:
+            print('user_id отсутствует в запросе')
+            return JsonResponse({"error": "user_id missing"}, status=400)
+        if status == 'APPROVED':
+            # Активируем подписку пользователя
+            from bot.models import User
+            from django.utils import timezone
+            user = User.objects.filter(telegram_id=str(user_id)).first()
+            now = timezone.now()
+            if user:
+                if user.subscription_end and user.subscription_end > now:
+                    user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
+                else:
+                    user.subscription_end = now + timezone.timedelta(days=30)
+                user.is_subscribed = True
+                user.save()
+                # Разбаниваем пользователя в группе
+                try:
+                    from bot.management.commands.ban_expired import GROUP_ID
+                    bot.unban_chat_member(GROUP_ID, int(user_id))
+                except Exception as e:
+                    print(f'Ошибка при разбане пользователя {user_id}: {e}')
                 send_invite_link(user_id)
                 return JsonResponse({"status": "invite sent"})
             else:
-                print(f'Оплата не подтверждена, статус: {status}')
                 return JsonResponse({"status": f"not approved: {status}"})
-        else:
-            print(f'Ошибка при запросе статуса оплаты: {resp.status_code}')
-            return JsonResponse({"error": f"tochka api error: {resp.status_code}"}, status=500)
     except Exception as e:
         print(f'Ошибка в обработчике tochka_payment_webhook: {e}')
         return JsonResponse({"error": str(e)}, status=500)
@@ -126,3 +124,35 @@ def index(request: HttpRequest) -> JsonResponse:
     bot.set_webhook(url=f"{settings.HOOK}/bot/payment_webhook/")
     bot.send_message(settings.OWNER_ID, "webhook set")
     return JsonResponse({"message": "webhook set"}, status=200)
+
+@require_GET
+def set_tochka_webhook(request: HttpRequest) -> JsonResponse:
+    import requests
+    import json
+    client_id = settings.TOCHKA_CLIENT_ID  # добавь в settings.py
+    token = settings.TOCHKA_API_TOKEN
+    webhook_url = f"{settings.HOOK}/bot/tochka_payment_webhook/"
+    url = f"https://enter.tochka.com/uapi/webhook/v1.0/{client_id}"
+    payload = json.dumps({
+        "webhooksList": [
+            "acquiringInternetPayment"
+        ],
+        "url": webhook_url
+    })
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {token}'
+    }
+    try:
+        resp = requests.request("PUT", url, headers=headers, data=payload)
+        try:
+            resp_json = resp.json()
+        except Exception:
+            resp_json = resp.text
+        print(f"Ответ Точки на регистрацию вебхука: {resp_json}")
+        if resp.status_code == 200 and isinstance(resp_json, dict) and not resp_json.get('code'):
+            return JsonResponse({"status": "ok", "response": resp_json})
+        else:
+            return JsonResponse({"status": "error", "response": resp_json}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

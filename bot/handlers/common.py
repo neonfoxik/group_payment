@@ -165,12 +165,15 @@ def handle_pay(message: Message):
     if not user.email:
         bot.send_message(user_id, "Перед оплатой укажите ваш email с помощью команды /email")
         return
-    amount = 1  # 1 рубль (100 копеек)
+    amount = 1
     purpose = "Оплата подписки"
     payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
     if payment_link:
-        user.last_operation_id = operation_id
-        user.save()
+        if operation_id:
+            if not user.operation_ids:
+                user.operation_ids = []
+            user.operation_ids.append(operation_id)
+            user.save()
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
@@ -190,40 +193,42 @@ def check_payment_callback(call: CallbackQuery):
     from bot.models import User
     from django.utils import timezone
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
-    if not user or not user.last_operation_id:
+    if not user or not user.operation_ids:
         bot.answer_callback_query(call.id, "Нет данных для проверки оплаты.", show_alert=True)
         return
-    operation_id = user.last_operation_id
-    api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
-    headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
-    resp = requests.get(api_url, headers=headers)
-    if resp.status_code == 200:
-        data = resp.json().get('Data', {})
-        operation_list = data.get('Operation')
-        if isinstance(operation_list, list) and operation_list:
-            status = operation_list[0].get('status')
-        else:
-            status = data.get('status')
-        if status == 'APPROVED':
-            # Обновляем подписку пользователя
-            user.last_operation_id = None
-            now = timezone.now()
-            if user.subscription_end and user.subscription_end > now:
-                user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
+    approved_id = None
+    for operation_id in list(user.operation_ids):  # копия списка для безопасного удаления
+        api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
+        headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
+        resp = requests.get(api_url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json().get('Data', {})
+            operation_list = data.get('Operation')
+            if isinstance(operation_list, list) and operation_list:
+                status = operation_list[0].get('status')
             else:
-                user.subscription_end = now + timezone.timedelta(days=30)
-            user.is_subscribed = True
-            user.save()
-            # Разбаниваем пользователя в группе
-            try:
-                from bot.management.commands.ban_expired import GROUP_ID
-                bot.unban_chat_member(GROUP_ID, call.from_user.id)
-            except Exception as e:
-                print(f'Ошибка при разбане пользователя {call.from_user.id}: {e}')
-            send_invite_link(call.from_user.id)
-            bot.answer_callback_query(call.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.", show_alert=True)
+                status = data.get('status')
+            if status == 'APPROVED':
+                approved_id = operation_id
+                break
+    if approved_id:
+        # Удаляем только подтверждённый operationId
+        user.operation_ids = [oid for oid in user.operation_ids if oid != approved_id]
+        now = timezone.now()
+        if user.subscription_end and user.subscription_end > now:
+            user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
         else:
-            bot.answer_callback_query(call.id, f"Оплата не подтверждена. Статус: {status}", show_alert=True)
+            user.subscription_end = now + timezone.timedelta(days=30)
+        user.is_subscribed = True
+        user.save()
+        # Разбаниваем пользователя и отправляем ссылку
+        try:
+            from bot.management.commands.ban_expired import GROUP_ID
+            bot.unban_chat_member(GROUP_ID, call.from_user.id)
+        except Exception as e:
+            print(f'Ошибка при разбане пользователя {call.from_user.id}: {e}')
+        send_invite_link(call.from_user.id)
+        bot.answer_callback_query(call.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.", show_alert=True)
     else:
-        bot.answer_callback_query(call.id, "Ошибка при проверке оплаты.", show_alert=True) 
+        bot.answer_callback_query(call.id, "Оплата не подтверждена по ни одному из платежей.", show_alert=True) 
     
