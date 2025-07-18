@@ -168,12 +168,22 @@ def start_registration(message: Message):
 
 start = bot.message_handler(commands=["start"])(start_registration)
 
-def handle_pay(message: Message):
+def handle_pay(message: Message, edit_message=False):
     user_id = message.from_user.id
     from bot.models import User
     user, _ = User.objects.get_or_create(telegram_id=str(user_id))
     if not user.email:
-        bot.send_message(user_id, "Перед оплатой укажите ваш email с помощью команды /email")
+        if edit_message:
+            try:
+                bot.edit_message_text(
+                    chat_id=message.message.chat.id,
+                    message_id=message.message.message_id,
+                    text="Перед оплатой укажите ваш email с помощью команды /email"
+                )
+            except Exception:
+                pass
+        else:
+            bot.send_message(user_id, "Перед оплатой укажите ваш email с помощью команды /email")
         return
     amount = 1
     purpose = "Оплата подписки"
@@ -188,14 +198,36 @@ def handle_pay(message: Message):
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
         markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
-        bot.send_message(user_id, PAY_TEXT, reply_markup=markup)
+        if edit_message:
+            try:
+                bot.edit_message_text(
+                    chat_id=message.message.chat.id,
+                    message_id=message.message.message_id,
+                    text=PAY_TEXT,
+                    reply_markup=markup
+                )
+            except Exception:
+                pass
+        else:
+            bot.send_message(user_id, PAY_TEXT, reply_markup=markup)
     else:
         error_text = f"Ошибка при создании ссылки на оплату.\n{error if error else ''}"
-        bot.send_message(user_id, error_text)
+        if edit_message:
+            try:
+                bot.edit_message_text(
+                    chat_id=message.message.chat.id,
+                    message_id=message.message.message_id,
+                    text=error_text
+                )
+            except Exception:
+                pass
+        else:
+            bot.send_message(user_id, error_text)
 
 @bot.callback_query_handler(func=lambda call: call.data == "pay_subscription")
 def pay_subscription_callback(call: CallbackQuery):
-    handle_pay(call)
+    # handle_pay теперь должен редактировать сообщение, а не отправлять новое
+    handle_pay(call, edit_message=True)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_payment")
@@ -203,13 +235,20 @@ def check_payment_callback(call: CallbackQuery):
     from django.conf import settings
     from bot.models import User
     from django.utils import timezone
-    bot.answer_callback_query(call.id)  # Сразу отвечаем Telegram, чтобы не было ошибки timeout
+    bot.answer_callback_query(call.id)
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     if not user or not user.operation_ids:
-        bot.send_message(call.from_user.id, "Нет данных для проверки оплаты.")
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Нет данных для проверки оплаты."
+            )
+        except Exception:
+            pass
         return
     approved_id = None
-    for operation_id in list(user.operation_ids):  # копия списка для безопасного удаления
+    for operation_id in list(user.operation_ids):
         api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
         headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
         resp = requests.get(api_url, headers=headers)
@@ -224,7 +263,6 @@ def check_payment_callback(call: CallbackQuery):
                 approved_id = operation_id
                 break
     if approved_id:
-        # Удаляем только подтверждённый operationId
         user.operation_ids = [oid for oid in user.operation_ids if oid != approved_id]
         now = timezone.now()
         if user.subscription_end and user.subscription_end > now:
@@ -233,24 +271,42 @@ def check_payment_callback(call: CallbackQuery):
             user.subscription_end = now + timezone.timedelta(days=30)
         user.is_subscribed = True
         user.save()
-        # Проверяем, состоит ли пользователь в группе
         group_id = settings.GROUP_ID
         try:
             member = bot.get_chat_member(group_id, call.from_user.id)
             if member.status not in ["left", "kicked"]:
-                # Уже в группе
                 date = user.subscription_end.strftime('%d.%m.%Y')
-                bot.send_message(call.from_user.id, f"Ваша подписка продлена до {date}.")
+                try:
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=f"Ваша подписка продлена до {date}."
+                    )
+                except Exception:
+                    pass
                 return
         except Exception as e:
             print(f'Ошибка при проверке членства в группе: {e}')
-        # Разбаниваем пользователя и отправляем ссылку
         try:
             from bot.management.commands.ban_expired import GROUP_ID
             bot.unban_chat_member(GROUP_ID, call.from_user.id)
         except Exception as e:
             print(f'Ошибка при разбане пользователя {call.from_user.id}: {e}')
         send_invite_link(call.from_user.id)
-        bot.send_message(call.from_user.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.")
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Оплата подтверждена! Ссылка отправлена. Подписка активирована."
+            )
+        except Exception:
+            pass
     else:
-        bot.send_message(call.from_user.id, "Оплата не подтверждена по ни одному из платежей.") 
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Оплата не подтверждена по ни одному из платежей."
+            )
+        except Exception:
+            pass 
