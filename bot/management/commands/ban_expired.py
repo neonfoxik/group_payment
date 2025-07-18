@@ -17,14 +17,9 @@ class Command(BaseCommand):
         users = User.objects.filter(subscription_end__lt=now, is_subscribed=True)
         for user in users:
             try:
-                bot.ban_chat_member(group_id, user.telegram_id)
-                logger.info(f"Пользователь {user.telegram_id} забанен в группе.")
+                bot.kick_chat_member(group_id, user.telegram_id)
+                logger.info(f"Пользователь {user.telegram_id} кикнут из группы.")
             except Exception as e:
-                logger.warning(f"Не удалось забанить {user.telegram_id}: {e}. Пробую кикнуть.")
-                try:
-                    bot.kick_chat_member(group_id, user.telegram_id)
-                    logger.info(f"Пользователь {user.telegram_id} кикнут из группы.")
-                except Exception as e2:
-                    logger.error(f"Не удалось кикнуть {user.telegram_id}: {e2}")
+                logger.error(f"Не удалось кикнуть {user.telegram_id}: {e}")
             user.is_subscribed = False
             user.save() 
