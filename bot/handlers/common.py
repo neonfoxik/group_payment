@@ -168,6 +168,11 @@ def save_email(message: Message):
     # Далее отправляем стартовый текст и кнопки
     from bot.texts import START_TEXT
     payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, "Оплата подписки", user.email)
+    if operation_id:
+        if not user.operation_ids:
+            user.operation_ids = []
+        user.operation_ids.append(operation_id)
+        user.save()
     markup = InlineKeyboardMarkup()
     if payment_link:
         markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
@@ -192,6 +197,11 @@ def start_registration(message: Message):
         return
     # Генерируем ссылку на оплату сразу при старте
     payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, "Оплата подписки", user.email)
+    if operation_id:
+        if not user.operation_ids:
+            user.operation_ids = []
+        user.operation_ids.append(operation_id)
+        user.save()
     markup = InlineKeyboardMarkup()
     if payment_link:
         markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
@@ -342,7 +352,7 @@ def check_payment_callback(call: CallbackQuery):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Оплата не подтверждена по ни одному из платежей."
+                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget"
             )
         except Exception:
             pass 
