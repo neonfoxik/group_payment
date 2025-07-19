@@ -184,7 +184,7 @@ def save_email(message: Message):
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
-    markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
+    markup.add(InlineKeyboardButton("Ввести промокод", callback_data="check_promo"))
     markup.add(InlineKeyboardButton("Статус подписки", callback_data="check_status"))
     bot.send_message(message.from_user.id, START_TEXT, reply_markup=markup)
 
@@ -223,7 +223,7 @@ def start_registration(message: Message):
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
-    markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
+    markup.add(InlineKeyboardButton("Ввести промокод", callback_data="check_promo"))
     markup.add(InlineKeyboardButton("Статус подписки", callback_data="check_status"))
     bot.send_message(
         message.from_user.id,
@@ -410,10 +410,28 @@ def check_promo_callback(call: CallbackQuery):
 def check_status_callback(call: CallbackQuery):
     from bot.models import User
     from django.utils import timezone
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     if user and user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now():
         date = user.subscription_end.strftime('%d.%m.%Y %H:%M')
-        bot.send_message(call.from_user.id, f"Ваша подписка активна до {date}.")
+        text = f"Ваша подписка активна до {date}."
     else:
-        bot.send_message(call.from_user.id, "У вас нет активной подписки.")
+        text = "У вас нет активной подписки."
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            reply_markup=markup
+        )
+    except Exception:
+        bot.send_message(call.from_user.id, text, reply_markup=markup)
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
+def back_to_menu_callback(call: CallbackQuery):
+    # Повторно показываем стартовое меню с кнопками
+    start_registration(call.message)
     bot.answer_callback_query(call.id) 
