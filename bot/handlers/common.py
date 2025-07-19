@@ -121,91 +121,31 @@ def register_user(message):
     return user, created
 
 def get_subscription_status(user):
+    from django.utils import timezone
+    now = timezone.now()
     if user.is_subscribed and user.subscription_end:
-        from django.utils import timezone
-        days = (user.subscription_end - timezone.now()).days
-        return True, user.subscription_end.strftime('%d.%m.%Y'), days
+        days = (user.subscription_end - now).days
+        return True, user.subscription_end.strftime('%d.%m.%Y'), max(days, 0)
     return False, None, None
-
-def get_payment_link_for_user(user_id, amount=1, purpose="Оплата подписки"):
-    from bot.models import User
-    user = User.objects.filter(telegram_id=str(user_id)).first()
-    if not user or not user.email:
-        return None, None, "Email пользователя не найден. Пожалуйста, укажите email через /email."
-    return create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
 
 def get_status_text(user):
     is_active, date, days = get_subscription_status(user)
     if is_active:
         return STATUS_ACTIVE.format(date=date, days=days)
     else:
-        return STATUS_INACTIVE 
+        return STATUS_INACTIVE
 
-EMAIL_REGEX = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+# Универсальная функция для генерации и показа главного экрана
 
-@bot.message_handler(commands=['email'])
-def ask_email(message: Message):
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
-    bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
-    bot.register_next_step_handler(message, save_email)
-
-def save_email(message: Message):
-    if message.text and message.text.lower() == 'отмена':
-        bot.send_message(message.from_user.id, "Изменение email отменено.")
-        return
-    email = message.text.strip()
-    if not re.match(EMAIL_REGEX, email):
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
-        bot.send_message(message.from_user.id, "Некорректный email. Попробуйте ещё раз или отправьте /email.", reply_markup=markup)
-        return
-    from bot.models import User
-    from django.utils import timezone
-    user, _ = User.objects.get_or_create(telegram_id=str(message.from_user.id))
-    user.email = email
-    user.save()
-    bot.send_message(message.from_user.id, f"Ваш email сохранён: {email}")
-    # Проверяем статус подписки
-    is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
-    if is_active:
-        button_text = "Продлить подписку"
-        purpose = "Продление подписки"
-    else:
-        button_text = "Оплатить"
-        purpose = "Оплата подписки"
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
-    if operation_id:
-        if not user.operation_ids:
-            user.operation_ids = []
-        user.operation_ids.append(operation_id)
-        user.save()
-    markup = InlineKeyboardMarkup()
-    if payment_link:
-        markup.add(InlineKeyboardButton(button_text, url=payment_link))
-    markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
-    markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
-    bot.send_message(message.from_user.id, START_TEXT, reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data == "cancel_email")
-def cancel_email_callback(call: CallbackQuery):
-    bot.send_message(call.from_user.id, "Изменение email отменено.")
-    bot.clear_step_handler_by_chat_id(call.from_user.id)
-    bot.answer_callback_query(call.id)
-
-def start_registration(message: Message):
-    user, created = register_user(message)
+def show_main_screen(user, chat_id):
     from bot.texts import START_TEXT
-    from bot.models import User
     from django.utils import timezone
-    if not user.email:
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
-        bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
-        bot.register_next_step_handler(message, save_email)
-        return
-    # Проверяем статус подписки
-    is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
+    is_active, date, days = get_subscription_status(user)
+    if is_active:
+        status_text = STATUS_ACTIVE.format(date=date, days=days)
+    else:
+        status_text = STATUS_INACTIVE
+    # Кнопки
     if is_active:
         button_text = "Продлить подписку"
         purpose = "Продление подписки"
@@ -224,160 +164,51 @@ def start_registration(message: Message):
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
     bot.send_message(
-        message.from_user.id,
-        START_TEXT,
+        chat_id,
+        f"{START_TEXT}\n\n{status_text}",
         reply_markup=markup
     )
 
-start = bot.message_handler(commands=["start"])(start_registration)
+# Использовать show_main_screen в start_registration и save_email
 
-def handle_pay(message: Message, edit_message=False):
-    user_id = message.from_user.id
-    from bot.models import User
-    user, _ = User.objects.get_or_create(telegram_id=str(user_id))
-    if not user.email:
-        if edit_message:
-            try:
-                bot.edit_message_text(
-                    chat_id=message.message.chat.id,
-                    message_id=message.message.message_id,
-                    text="Перед оплатой укажите ваш email с помощью команды /email"
-                )
-            except Exception:
-                pass
-        else:
-            bot.send_message(user_id, "Перед оплатой укажите ваш email с помощью команды /email")
-        return
-    amount = 1
-    purpose = "Оплата подписки"
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
-    if payment_link:
-        if operation_id:
-            if not user.operation_ids:
-                user.operation_ids = []
-            user.operation_ids.append(operation_id)
-            user.save()
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
-        markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
-        if edit_message:
-            try:
-                bot.edit_message_text(
-                    chat_id=message.message.chat.id,
-                    message_id=message.message.message_id,
-                    text=PAY_TEXT,
-                    reply_markup=markup
-                )
-            except Exception:
-                pass
-        else:
-            bot.send_message(user_id, PAY_TEXT, reply_markup=markup)
-    else:
-        error_text = f"Ошибка при создании ссылки на оплату.\n{error if error else ''}"
-        if edit_message:
-            try:
-                bot.edit_message_text(
-                    chat_id=message.message.chat.id,
-                    message_id=message.message.message_id,
-                    text=error_text
-                )
-            except Exception:
-                pass
-        else:
-            bot.send_message(user_id, error_text)
-
-@bot.callback_query_handler(func=lambda call: call.data == "pay_subscription")
-def pay_subscription_callback(call: CallbackQuery):
-    # handle_pay теперь должен редактировать сообщение, а не отправлять новое
-    handle_pay(call, edit_message=True)
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "check_payment")
-def check_payment_callback(call: CallbackQuery):
-    from django.conf import settings
+def start_registration(message: Message):
+    user, created = register_user(message)
     from bot.models import User
     from django.utils import timezone
-    bot.answer_callback_query(call.id)
-    user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
-    if not user or not user.operation_ids:
-        try:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget"
-            )
-        except Exception:
-            pass
+    if not user.email:
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
+        bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
+        bot.register_next_step_handler(message, save_email)
         return
-    approved_id = None
-    for operation_id in list(user.operation_ids):
-        api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
-        headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
-        resp = requests.get(api_url, headers=headers)
-        if resp.status_code == 200:
-            data = resp.json().get('Data', {})
-            operation_list = data.get('Operation')
-            if isinstance(operation_list, list) and operation_list:
-                status = operation_list[0].get('status')
-            else:
-                status = data.get('status')
-            if status == 'APPROVED':
-                approved_id = operation_id
-                break
-    if approved_id:
-        user.operation_ids = [oid for oid in user.operation_ids if oid != approved_id]
-        now = timezone.now()
-        if user.subscription_end and user.subscription_end > now:
-            user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
-        else:
-            user.subscription_end = now + timezone.timedelta(days=30)
-        user.is_subscribed = True
-        user.save()
-        group_id = settings.GROUP_ID
-        try:
-            member = bot.get_chat_member(group_id, call.from_user.id)
-            if member.status not in ["left", "kicked"]:
-                date = user.subscription_end.strftime('%d.%m.%Y')
-                try:
-                    bot.edit_message_text(
-                        chat_id=call.message.chat.id,
-                        message_id=call.message.message_id,
-                        text=f"Ваша подписка продлена до {date}."
-                    )
-                except Exception:
-                    pass
-                return
-        except Exception as e:
-            print(f'Ошибка при проверке членства в группе: {e}')
-        try:
-            from bot.management.commands.ban_expired import GROUP_ID
-            bot.unban_chat_member(GROUP_ID, call.from_user.id)
-        except Exception as e:
-            print(f'Ошибка при разбане пользователя {call.from_user.id}: {e}')
-        send_invite_link(call.from_user.id)
-        try:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Оплата подтверждена! Ссылка отправлена. Подписка активирована."
-            )
-        except Exception:
-            pass
-    else:
-        try:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget"
-            )
-        except Exception:
-            pass 
+    show_main_screen(user, message.from_user.id)
 
-@bot.message_handler(commands=['promo'])
-def ask_promo(message: Message):
-    bot.send_message(message.from_user.id, "Введите промокод:")
-    bot.register_next_step_handler(message, activate_promo)
+def save_email(message: Message):
+    if message.text and message.text.lower() == 'отмена':
+        bot.send_message(message.from_user.id, "Изменение email отменено.")
+        return
+    email = message.text.strip()
+    if not re.match(EMAIL_REGEX, email):
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
+        bot.send_message(message.from_user.id, "Некорректный email. Попробуйте ещё раз или отправьте /email.", reply_markup=markup)
+        return
+    from bot.models import User
+    from django.utils import timezone
+    user, _ = User.objects.get_or_create(telegram_id=str(message.from_user.id))
+    user.email = email
+    user.save()
+    bot.send_message(message.from_user.id, f"Ваш email сохранён: {email}")
+    show_main_screen(user, message.from_user.id)
+
+EMAIL_REGEX = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+
+@bot.message_handler(commands=['email'])
+def ask_email(message: Message):
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
+    bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
+    bot.register_next_step_handler(message, save_email)
 
 def activate_promo(message: Message):
     code = message.text.strip()
@@ -388,6 +219,7 @@ def activate_promo(message: Message):
     user, _ = User.objects.get_or_create(telegram_id=str(message.from_user.id))
     from django.utils import timezone
     now = timezone.now()
+    # Если подписка просрочена, новая дата = сегодня + 30 дней
     if user.subscription_end and user.subscription_end > now:
         user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
     else:
@@ -397,7 +229,8 @@ def activate_promo(message: Message):
     promo.is_used = True
     promo.used_by = user
     promo.save()
-    bot.send_message(message.from_user.id, "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.") 
+    bot.send_message(message.from_user.id, "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.")
+    show_main_screen(user, message.from_user.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_promo")
 def check_promo_callback(call: CallbackQuery):
