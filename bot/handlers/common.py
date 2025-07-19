@@ -221,6 +221,7 @@ def start_registration(message: Message):
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+    markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
     bot.send_message(
         message.from_user.id,
         START_TEXT,
@@ -396,3 +397,8 @@ def activate_promo(message: Message):
     promo.used_by = user
     promo.save()
     bot.send_message(message.from_user.id, "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.") 
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_promo")
+def check_promo_callback(call: CallbackQuery):
+    ask_promo(call.message)
+    bot.answer_callback_query(call.id) 
