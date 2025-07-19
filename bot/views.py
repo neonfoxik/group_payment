@@ -10,7 +10,7 @@ from bot.bot_instance import bot
 from django.conf import settings
 import requests
 from bot.handlers.common import (
-    register_user, get_status_text, send_invite_link
+    register_user, get_status_text, get_payment_link_for_user, send_invite_link
 )
 from bot.keyboards import main_markup
 from bot.texts import START_TEXT
