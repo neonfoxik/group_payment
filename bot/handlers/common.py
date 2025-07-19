@@ -161,13 +161,20 @@ def save_email(message: Message):
         bot.send_message(message.from_user.id, "Некорректный email. Попробуйте ещё раз или отправьте /email.", reply_markup=markup)
         return
     from bot.models import User
+    from django.utils import timezone
     user, _ = User.objects.get_or_create(telegram_id=str(message.from_user.id))
     user.email = email
     user.save()
     bot.send_message(message.from_user.id, f"Ваш email сохранён: {email}")
-    # Далее отправляем стартовый текст и кнопки
-    from bot.texts import START_TEXT
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, "Оплата подписки", user.email)
+    # Проверяем статус подписки
+    is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
+    if is_active:
+        button_text = "Продлить подписку"
+        purpose = "Продление подписки"
+    else:
+        button_text = "Оплатить"
+        purpose = "Оплата подписки"
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
     if operation_id:
         if not user.operation_ids:
             user.operation_ids = []
@@ -175,7 +182,7 @@ def save_email(message: Message):
         user.save()
     markup = InlineKeyboardMarkup()
     if payment_link:
-        markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
+        markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     bot.send_message(message.from_user.id, START_TEXT, reply_markup=markup)
 
@@ -189,14 +196,22 @@ def start_registration(message: Message):
     user, created = register_user(message)
     from bot.texts import START_TEXT
     from bot.models import User
+    from django.utils import timezone
     if not user.email:
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
         bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
         bot.register_next_step_handler(message, save_email)
         return
-    # Генерируем ссылку на оплату сразу при старте
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, "Оплата подписки", user.email)
+    # Проверяем статус подписки
+    is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
+    if is_active:
+        button_text = "Продлить подписку"
+        purpose = "Продление подписки"
+    else:
+        button_text = "Оплатить"
+        purpose = "Оплата подписки"
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
     if operation_id:
         if not user.operation_ids:
             user.operation_ids = []
@@ -204,7 +219,7 @@ def start_registration(message: Message):
         user.save()
     markup = InlineKeyboardMarkup()
     if payment_link:
-        markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
+        markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     bot.send_message(
         message.from_user.id,

@@ -4,7 +4,8 @@ from functools import wraps
 from django.conf import settings
 from telebot.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from bot.keyboards import ADMIN_MARKUP
-from bot import bot, logger
+from bot.bot_instance import bot
+from bot import logger
 from bot.models import User, PromoCode
 import random
 import string

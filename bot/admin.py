@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import User
+from bot.bot_instance import bot
 
 class UserAdmin(admin.ModelAdmin):
     list_display = ('user_tg_name', 'user_name', 'subscription_end', 'is_subscribed')

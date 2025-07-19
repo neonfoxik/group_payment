@@ -25,7 +25,7 @@ LOCAL = os.getenv('LOCAL')
 ALLOWED_HOSTS = ["*"]
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-OWNER_ID = os.getenv('OWNER_ID')
+OWNER_ID = int(os.getenv('OWNER_ID')) if os.getenv('OWNER_ID') else None
 HOOK = os.getenv('HOOK')
 TOCHKA_API_TOKEN = os.getenv('TOCHKA_API_TOKEN')
 INVITE_LINK = os.getenv('INVITE_LINK')
