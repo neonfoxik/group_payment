@@ -432,6 +432,30 @@ def check_status_callback(call: CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
 def back_to_menu_callback(call: CallbackQuery):
-    # Повторно показываем стартовое меню с кнопками
-    start_registration(call.message)
+    # Повторно показываем стартовое меню с кнопками через edit_message_text
+    user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
+    from bot.texts import START_TEXT
+    from django.utils import timezone
+    if user and user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now():
+        button_text = "Продлить подписку"
+        purpose = "Продление подписки"
+    else:
+        button_text = "Оплатить"
+        purpose = "Оплата подписки"
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email) if user and user.email else (None, None, None)
+    markup = InlineKeyboardMarkup()
+    if payment_link:
+        markup.add(InlineKeyboardButton(button_text, url=payment_link))
+    markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+    markup.add(InlineKeyboardButton("Ввести промокод", callback_data="check_promo"))
+    markup.add(InlineKeyboardButton("Статус подписки", callback_data="check_status"))
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=START_TEXT,
+            reply_markup=markup
+        )
+    except Exception:
+        bot.send_message(call.from_user.id, START_TEXT, reply_markup=markup)
     bot.answer_callback_query(call.id) 
