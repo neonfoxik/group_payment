@@ -300,17 +300,21 @@ def check_payment_callback(call: CallbackQuery):
     from django.conf import settings
     from bot.models import User
     from django.utils import timezone
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
     bot.answer_callback_query(call.id)
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
     if not user or not user.operation_ids:
         try:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget"
+                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget",
+                reply_markup=markup
             )
         except Exception:
-            pass
+            bot.send_message(call.from_user.id, "Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget", reply_markup=markup)
         return
     approved_id = None
     for operation_id in list(user.operation_ids):
@@ -345,10 +349,11 @@ def check_payment_callback(call: CallbackQuery):
                     bot.edit_message_text(
                         chat_id=call.message.chat.id,
                         message_id=call.message.message_id,
-                        text=f"Ваша подписка продлена до {date}."
+                        text=f"Ваша подписка продлена до {date}.",
+                        reply_markup=markup
                     )
                 except Exception:
-                    pass
+                    bot.send_message(call.from_user.id, f"Ваша подписка продлена до {date}.", reply_markup=markup)
                 return
         except Exception as e:
             print(f'Ошибка при проверке членства в группе: {e}')
@@ -362,19 +367,21 @@ def check_payment_callback(call: CallbackQuery):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Оплата подтверждена! Ссылка отправлена. Подписка активирована."
+                text="Оплата подтверждена! Ссылка отправлена. Подписка активирована.",
+                reply_markup=markup
             )
         except Exception:
-            pass
+            bot.send_message(call.from_user.id, "Оплата подтверждена! Ссылка отправлена. Подписка активирована.", reply_markup=markup)
     else:
         try:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget"
+                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget",
+                reply_markup=markup
             )
         except Exception:
-            pass 
+            bot.send_message(call.from_user.id, "Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget", reply_markup=markup)
 
 @bot.message_handler(commands=['promo'])
 def ask_promo(message: Message):
