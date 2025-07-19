@@ -7,7 +7,7 @@ from bot.texts import START_TEXT, STATUS_ACTIVE, STATUS_INACTIVE, THANKS_PAYMENT
 import requests
 import json
 import uuid
-from bot.models import User
+from bot.models import User, PromoCode
 import logging
 logger = logging.getLogger("tochka_payment")
 import re
@@ -278,7 +278,7 @@ def check_payment_callback(call: CallbackQuery):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Нет данных для проверки оплаты."
+                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget"
             )
         except Exception:
             pass
@@ -346,3 +346,28 @@ def check_payment_callback(call: CallbackQuery):
             )
         except Exception:
             pass 
+
+@bot.message_handler(commands=['promo'])
+def ask_promo(message: Message):
+    bot.send_message(message.from_user.id, "Введите промокод:")
+    bot.register_next_step_handler(message, activate_promo)
+
+def activate_promo(message: Message):
+    code = message.text.strip()
+    promo = PromoCode.objects.filter(code=code, is_used=False).first()
+    if not promo:
+        bot.send_message(message.from_user.id, "Промокод не найден или уже использован.")
+        return
+    user, _ = User.objects.get_or_create(telegram_id=str(message.from_user.id))
+    from django.utils import timezone
+    now = timezone.now()
+    if user.subscription_end and user.subscription_end > now:
+        user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
+    else:
+        user.subscription_end = now + timezone.timedelta(days=30)
+    user.is_subscribed = True
+    user.save()
+    promo.is_used = True
+    promo.used_by = user
+    promo.save()
+    bot.send_message(message.from_user.id, "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.") 

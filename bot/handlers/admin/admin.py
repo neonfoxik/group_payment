@@ -5,7 +5,9 @@ from django.conf import settings
 from telebot.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from bot.keyboards import ADMIN_MARKUP
 from bot import bot, logger
-from bot.models import User
+from bot.models import User, PromoCode
+import random
+import string
 
 def admin_permission(func):
     """
@@ -64,3 +66,13 @@ def handle_message(msg: Message):
         except Exception as e:
             logger.warning(f'Пользователь {user.telegram_id} заблокировал бота или произошла другая ошибка: {e}')
     bot.send_message(msg.from_user.id, '✅ Сообщение успешно отправлено всем пользователям.')
+
+
+@bot.message_handler(commands=['gen'])
+def generate_promocode(message: Message):
+    if message.from_user.id != settings.OWNER_ID:
+        bot.send_message(message.from_user.id, '⛔ Только владелец может генерировать промокоды.')
+        return
+    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    PromoCode.objects.create(code=code)
+    bot.send_message(message.from_user.id, f'Промокод: {code}')

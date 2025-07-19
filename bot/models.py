@@ -37,3 +37,12 @@ class User(models.Model):
     class Meta:
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'
+
+
+class PromoCode(models.Model):
+    code = models.CharField(max_length=32, unique=True)
+    is_used = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
+    def __str__(self):
+        return self.code
