@@ -184,6 +184,7 @@ def save_email(message: Message):
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+    markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
     bot.send_message(message.from_user.id, START_TEXT, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "cancel_email")
@@ -400,5 +401,5 @@ def activate_promo(message: Message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_promo")
 def check_promo_callback(call: CallbackQuery):
-    ask_promo(call.message)
-    bot.answer_callback_query(call.id) 
+    bot.send_message(call.from_user.id, "Введите промокод:")
+    bot.register_next_step_handler(call.message, activate_promo) 
