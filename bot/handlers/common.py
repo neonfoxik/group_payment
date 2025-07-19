@@ -137,20 +137,17 @@ def get_status_text(user):
 
 # Универсальная функция для генерации и показа главного экрана
 
-def show_main_screen(user, chat_id):
+def show_main_screen(user, chat_id, edit_message_id=None):
     from bot.texts import START_TEXT
     from django.utils import timezone
     is_active, date, days = get_subscription_status(user)
     if is_active:
         status_text = STATUS_ACTIVE.format(date=date, days=days)
-    else:
-        status_text = STATUS_INACTIVE
-    # Кнопки
-    if is_active:
         button_text = "Продлить подписку"
         purpose = "Продление подписки"
     else:
-        button_text = "Оплатить"
+        status_text = STATUS_INACTIVE
+        button_text = "Оплатить подписку"
         purpose = "Оплата подписки"
     payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
     if operation_id:
@@ -159,15 +156,58 @@ def show_main_screen(user, chat_id):
         user.operation_ids.append(operation_id)
         user.save()
     markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Статус подписки", callback_data="check_subscription"))
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     markup.add(InlineKeyboardButton("Проверить промокод", callback_data="check_promo"))
-    bot.send_message(
-        chat_id,
-        f"{START_TEXT}\n\n{status_text}",
-        reply_markup=markup
-    )
+    if edit_message_id:
+        try:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=edit_message_id,
+                text=f"{START_TEXT}\n\n{status_text}",
+                reply_markup=markup
+            )
+        except Exception:
+            pass
+    else:
+        bot.send_message(
+            chat_id,
+            f"{START_TEXT}\n\n{status_text}",
+            reply_markup=markup
+        )
+
+# Обработчик для возврата на главное меню по callback
+@bot.callback_query_handler(func=lambda call: call.data == "main_menu")
+def main_menu_callback(call: CallbackQuery):
+    from bot.models import User
+    user, _ = User.objects.get_or_create(telegram_id=str(call.from_user.id))
+    show_main_screen(user, call.from_user.id, edit_message_id=call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+# Обработчик для кнопки 'Статус подписки'
+@bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
+def check_subscription_callback(call: CallbackQuery):
+    from bot.models import User
+    user, _ = User.objects.get_or_create(telegram_id=str(call.from_user.id))
+    is_active, date, days = get_subscription_status(user)
+    if is_active:
+        text = STATUS_ACTIVE.format(date=date, days=days)
+    else:
+        text = STATUS_INACTIVE
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Назад", callback_data="main_menu"))
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            reply_markup=markup
+        )
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id)
 
 # Использовать show_main_screen в start_registration и save_email
 
