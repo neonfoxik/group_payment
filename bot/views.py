@@ -13,7 +13,7 @@ from bot.handlers.common import (
     register_user, get_status_text, get_payment_link_for_user, send_invite_link
 )
 from bot.keyboards import main_markup
-from bot.texts import START_TEXT, PAY_TEXT
+from bot.texts import START_TEXT
 from telebot.types import Message, CallbackQuery
 from django.core.mail import send_mail
 

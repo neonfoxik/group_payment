@@ -3,7 +3,7 @@ from bot.bot_instance import bot
 from bot.keyboards import main_markup, main_inline_markup
 from telebot.types import Message, CallbackQuery
 from django.conf import settings
-from bot.texts import START_TEXT, PAY_TEXT, STATUS_ACTIVE, STATUS_INACTIVE, THANKS_PAYMENT
+from bot.texts import START_TEXT, STATUS_ACTIVE, STATUS_INACTIVE, THANKS_PAYMENT
 import requests
 import json
 import uuid
@@ -11,6 +11,7 @@ from bot.models import User
 import logging
 logger = logging.getLogger("tochka_payment")
 import re
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Реальный запрос к API Точка
 
@@ -144,26 +145,61 @@ EMAIL_REGEX = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
 
 @bot.message_handler(commands=['email'])
 def ask_email(message: Message):
-    bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:")
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
+    bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
     bot.register_next_step_handler(message, save_email)
 
 def save_email(message: Message):
+    if message.text and message.text.lower() == 'отмена':
+        bot.send_message(message.from_user.id, "Изменение email отменено.")
+        return
     email = message.text.strip()
     if not re.match(EMAIL_REGEX, email):
-        bot.send_message(message.from_user.id, "Некорректный email. Попробуйте ещё раз или отправьте /email.")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
+        bot.send_message(message.from_user.id, "Некорректный email. Попробуйте ещё раз или отправьте /email.", reply_markup=markup)
         return
     from bot.models import User
     user, _ = User.objects.get_or_create(telegram_id=str(message.from_user.id))
     user.email = email
     user.save()
     bot.send_message(message.from_user.id, f"Ваш email сохранён: {email}")
+    # Далее отправляем стартовый текст и кнопки
+    from bot.texts import START_TEXT
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, "Оплата подписки", user.email)
+    markup = InlineKeyboardMarkup()
+    if payment_link:
+        markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
+    markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+    bot.send_message(message.from_user.id, START_TEXT, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_email")
+def cancel_email_callback(call: CallbackQuery):
+    bot.send_message(call.from_user.id, "Изменение email отменено.")
+    bot.clear_step_handler_by_chat_id(call.from_user.id)
+    bot.answer_callback_query(call.id)
 
 def start_registration(message: Message):
     user, created = register_user(message)
+    from bot.texts import START_TEXT
+    from bot.models import User
+    if not user.email:
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
+        bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
+        bot.register_next_step_handler(message, save_email)
+        return
+    # Генерируем ссылку на оплату сразу при старте
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, "Оплата подписки", user.email)
+    markup = InlineKeyboardMarkup()
+    if payment_link:
+        markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
+    markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     bot.send_message(
         message.from_user.id,
         START_TEXT,
-        reply_markup=main_inline_markup()
+        reply_markup=markup
     )
 
 start = bot.message_handler(commands=["start"])(start_registration)
