@@ -27,7 +27,7 @@ class User(models.Model):
         null=True,
         blank=True,
     )
-    operation_ids = jsonfield.JSONField(default=list, blank=True, verbose_name='Список operationId оплат')
+    operation_id = models.CharField(max_length=128, blank=True, null=True, verbose_name='Текущий operationId оплаты')
     subscription_end = models.DateTimeField(null=True, blank=True, verbose_name='Дата окончания подписки')
     is_subscribed = models.BooleanField(default=False, verbose_name='Активна ли подписка')
 

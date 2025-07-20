@@ -43,6 +43,10 @@ def pay_subscription(call: CallbackQuery):
     user_id = call.from_user.id
     payment_link, operation_id, error = get_payment_link_for_user(user_id)
     if payment_link:
+        user = User.objects.filter(telegram_id=str(user_id)).first()
+        if user and operation_id:
+            user.operation_id = operation_id
+            user.save()
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
@@ -104,6 +108,7 @@ def tochka_payment_webhook(request: HttpRequest) -> JsonResponse:
                 else:
                     user.subscription_end = now + timezone.timedelta(days=30)
                 user.is_subscribed = True
+                user.operation_id = None
                 user.save()
                 # Разбаниваем пользователя в группе
                 try:
