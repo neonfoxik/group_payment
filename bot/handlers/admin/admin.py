@@ -1,6 +1,5 @@
 from functools import wraps
 
-
 from django.conf import settings
 from telebot.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from bot.keyboards import ADMIN_MARKUP
