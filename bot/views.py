@@ -104,7 +104,6 @@ def tochka_payment_webhook(request: HttpRequest) -> JsonResponse:
                 else:
                     user.subscription_end = now + timezone.timedelta(days=30)
                 user.is_subscribed = True
-                user.last_operation_id = None  # сбрасываем после оплаты
                 user.save()
                 # Разбаниваем пользователя в группе
                 try:

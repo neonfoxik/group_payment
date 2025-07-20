@@ -132,29 +132,7 @@ def get_payment_link_for_user(user_id, amount=1000, purpose="Оплата под
     user = User.objects.filter(telegram_id=str(user_id)).first()
     if not user or not user.email:
         return None, None, "Email пользователя не найден. Пожалуйста, укажите email через /email."
-    # Если есть last_operation_id и она не оплачена, вернуть старую ссылку
-    if user.last_operation_id:
-        api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{user.last_operation_id}"
-        headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
-        resp = requests.get(api_url, headers=headers)
-        if resp.status_code == 200:
-            data = resp.json().get('Data', {})
-            operation_list = data.get('Operation')
-            if isinstance(operation_list, list) and operation_list:
-                status = operation_list[0].get('status')
-            else:
-                status = data.get('status')
-            if status != 'APPROVED':
-                # Получить ссылку из старой операции
-                payment_link = data.get('paymentLink')
-                if payment_link:
-                    return payment_link, user.last_operation_id, None
-    # Если нет last_operation_id или она оплачена, создать новую
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
-    if operation_id:
-        user.last_operation_id = operation_id
-        user.save()
-    return payment_link, operation_id, error
+    return create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
 
 def get_status_text(user):
     is_active, date, days = get_subscription_status(user)
@@ -196,7 +174,12 @@ def save_email(message: Message):
     else:
         button_text = "Оплатить"
         purpose = "Оплата подписки"
-    payment_link, operation_id, error = get_payment_link_for_user(user.telegram_id, 1000, purpose)
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
+    if operation_id:
+        if not user.operation_ids:
+            user.operation_ids = []
+        user.operation_ids.append(operation_id)
+        user.save()
     markup = InlineKeyboardMarkup()
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
@@ -230,7 +213,12 @@ def start_registration(message: Message):
     else:
         button_text = "Оплатить"
         purpose = "Оплата подписки"
-    payment_link, operation_id, error = get_payment_link_for_user(user.telegram_id, 1000, purpose)
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
+    if operation_id:
+        if not user.operation_ids:
+            user.operation_ids = []
+        user.operation_ids.append(operation_id)
+        user.save()
     markup = InlineKeyboardMarkup()
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
@@ -264,24 +252,42 @@ def handle_pay(message: Message, edit_message=False):
         return
     amount = 1000
     purpose = "Оплата подписки"
-    payment_link, operation_id, error = get_payment_link_for_user(user_id, amount, purpose)
-    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-    markup = InlineKeyboardMarkup()
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
     if payment_link:
+        if operation_id:
+            if not user.operation_ids:
+                user.operation_ids = []
+            user.operation_ids.append(operation_id)
+            user.save()
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Оплатить", url=payment_link))
-    markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
-    if edit_message:
-        try:
-            bot.edit_message_text(
-                chat_id=message.message.chat.id,
-                message_id=message.message.message_id,
-                text=PAY_TEXT,
-                reply_markup=markup
-            )
-        except Exception:
-            pass
+        markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+        if edit_message:
+            try:
+                bot.edit_message_text(
+                    chat_id=message.message.chat.id,
+                    message_id=message.message.message_id,
+                    text=PAY_TEXT,
+                    reply_markup=markup
+                )
+            except Exception:
+                pass
+        else:
+            bot.send_message(user_id, PAY_TEXT, reply_markup=markup)
     else:
-        bot.send_message(user_id, PAY_TEXT, reply_markup=markup)
+        error_text = f"Ошибка при создании ссылки на оплату.\n{error if error else ''}"
+        if edit_message:
+            try:
+                bot.edit_message_text(
+                    chat_id=message.message.chat.id,
+                    message_id=message.message.message_id,
+                    text=error_text
+                )
+            except Exception:
+                pass
+        else:
+            bot.send_message(user_id, error_text)
 
 @bot.callback_query_handler(func=lambda call: call.data == "pay_subscription")
 def pay_subscription_callback(call: CallbackQuery):
@@ -289,6 +295,7 @@ def pay_subscription_callback(call: CallbackQuery):
     handle_pay(call, edit_message=True)
     bot.answer_callback_query(call.id)
 
+@bot.callback_query_handler(func=lambda call: call.data == "check_payment")
 def check_payment_callback(call: CallbackQuery):
     from django.conf import settings
     from bot.models import User
@@ -298,7 +305,7 @@ def check_payment_callback(call: CallbackQuery):
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
-    if not user or not user.last_operation_id:
+    if not user or not user.operation_ids:
         try:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
@@ -309,21 +316,23 @@ def check_payment_callback(call: CallbackQuery):
         except Exception:
             bot.send_message(call.from_user.id, "Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget", reply_markup=markup)
         return
-    api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{user.last_operation_id}"
-    headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
-    resp = requests.get(api_url, headers=headers)
-    approved = False
-    if resp.status_code == 200:
-        data = resp.json().get('Data', {})
-        operation_list = data.get('Operation')
-        if isinstance(operation_list, list) and operation_list:
-            status = operation_list[0].get('status')
-        else:
-            status = data.get('status')
-        if status == 'APPROVED':
-            approved = True
-    if approved:
-        user.last_operation_id = None
+    approved_id = None
+    for operation_id in list(user.operation_ids):
+        api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
+        headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
+        resp = requests.get(api_url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json().get('Data', {})
+            operation_list = data.get('Operation')
+            if isinstance(operation_list, list) and operation_list:
+                status = operation_list[0].get('status')
+            else:
+                status = data.get('status')
+            if status == 'APPROVED':
+                approved_id = operation_id
+                break
+    if approved_id:
+        user.operation_ids = [oid for oid in user.operation_ids if oid != approved_id]
         now = timezone.now()
         if user.subscription_end and user.subscription_end > now:
             user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
@@ -440,7 +449,7 @@ def back_to_menu_callback(call: CallbackQuery):
     else:
         button_text = "Оплатить"
         purpose = "Оплата подписки"
-    payment_link, operation_id, error = get_payment_link_for_user(user.telegram_id, 1000, purpose) if user and user.email else (None, None, None)
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email) if user and user.email else (None, None, None)
     markup = InlineKeyboardMarkup()
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
