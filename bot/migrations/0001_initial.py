@@ -17,7 +17,7 @@ class Migration(migrations.Migration):
                 ('event_id', models.AutoField(primary_key=True, serialize=False)),
                 ('name', models.CharField(max_length=50, verbose_name='Название евента для пользователя')),
                 ('chanel_name', models.CharField(max_length=50, verbose_name='Название кнала с собачкой')),
-                ('price', models.IntegerField(default=1, verbose_name='Выплата юзеру за подписку')),
+                ('price', models.IntegerField(default=1000, verbose_name='Выплата юзеру за подписку')),
                 ('remaining_number_of_clicks', models.IntegerField(default=1, verbose_name='Максимально возможное количество переходов по ссылке')),
                 ('users', models.JSONField(blank=True, default=list, verbose_name='Пользователи перешедшие по ссылке')),
             ],
@@ -31,7 +31,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('goods_name', models.CharField(max_length=50, verbose_name='Название товара')),
-                ('goods_price', models.IntegerField(default=1, verbose_name='Цена товара')),
+                ('goods_price', models.IntegerField(default=1000, verbose_name='Цена товара')),
             ],
             options={
                 'verbose_name': 'Товар',
