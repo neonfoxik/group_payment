@@ -116,25 +116,11 @@ def send_invite_link(user_id):
     from django.conf import settings
     try:
         group_id = settings.GROUP_ID
-        # Если ID начинается с -100, убираем это
-        if isinstance(group_id, str) and group_id.startswith('-100'):
-            group_id = group_id[4:]
+        logger.info(f"Попытка создания ссылки для приватной группы {group_id}")
         
-        logger.info(f"Попытка создания ссылки для группы {group_id}")
-        
-        # Проверяем информацию о группе
-        try:
-            chat_info = bot.get_chat(group_id)
-            logger.info(f"Информация о группе: {chat_info.title} (type: {chat_info.type})")
-        except Exception as e:
-            logger.error(f"Ошибка при получении информации о группе: {e}")
-            return None
-
         # Проверяем права бота
         try:
             bot_member = bot.get_chat_member(group_id, bot.get_me().id)
-            logger.info(f"Права бота: {bot_member.status}, can_invite_users: {bot_member.can_invite_users}")
-            
             if not bot_member.can_invite_users:
                 logger.error("У бота нет прав на создание инвайт-ссылок")
                 bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
@@ -143,27 +129,18 @@ def send_invite_link(user_id):
             logger.error(f"Ошибка при проверке прав бота: {e}")
             return None
 
-        # Пробуем создать ссылку
+        # Создаем ссылку для приватной группы
         try:
-            # Создаем временную ссылку на 24 часа
-            from datetime import datetime, timedelta
-            expire_date = int((datetime.now() + timedelta(days=1)).timestamp())
-            
+            # Создаем ссылку без ограничения по времени, только по количеству использований
             invite = bot.create_chat_invite_link(
                 chat_id=group_id,
-                member_limit=1,
-                expire_date=expire_date
+                member_limit=1,  # Ограничение на одно использование
+                expire_date=None,  # Без ограничения по времени
+                creates_join_request=False  # Разрешаем прямой вход без запроса
             )
             
             if invite and invite.invite_link:
-                logger.info(f"Успешно создана ссылка: {invite.invite_link}")
-                # Проверяем созданную ссылку
-                try:
-                    invite_info = bot.get_chat_invite_link(group_id, invite.invite_link)
-                    logger.info(f"Информация о созданной ссылке: {invite_info}")
-                except Exception as e:
-                    logger.error(f"Ошибка при проверке созданной ссылки: {e}")
-                
+                logger.info(f"Успешно создана ссылка для приватной группы: {invite.invite_link}")
                 return invite.invite_link
             else:
                 logger.error("Не удалось получить ссылку после создания")
@@ -171,16 +148,6 @@ def send_invite_link(user_id):
                 
         except Exception as e:
             logger.error(f"Ошибка при создании ссылки: {e}")
-            
-            # Пробуем создать обычную ссылку как запасной вариант
-            try:
-                invite_link = bot.export_chat_invite_link(group_id)
-                if invite_link:
-                    logger.info(f"Создана обычная ссылка: {invite_link}")
-                    return invite_link
-            except Exception as e2:
-                logger.error(f"Ошибка при создании обычной ссылки: {e2}")
-            
             return None
             
     except Exception as e:
