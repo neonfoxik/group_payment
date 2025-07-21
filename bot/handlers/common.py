@@ -118,36 +118,73 @@ def send_invite_link(user_id):
         group_id = settings.GROUP_ID
         logger.info(f"Попытка создания ссылки для приватной группы {group_id}")
         
-        # Проверяем права бота
+        # Проверяем права бота и тип группы
         try:
-            bot_member = bot.get_chat_member(group_id, bot.get_me().id)
-            if not bot_member.can_invite_users:
-                logger.error("У бота нет прав на создание инвайт-ссылок")
-                bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
+            chat_info = bot.get_chat(group_id)
+            logger.info(f"Тип группы: {chat_info.type}")
+            logger.info(f"Название группы: {chat_info.title}")
+            logger.info(f"Приватность: {getattr(chat_info, 'is_private', False)}")
+            
+            if chat_info.type not in ['group', 'supergroup']:
+                logger.error(f"Неверный тип чата: {chat_info.type}")
+                bot.send_message(settings.OWNER_ID, f"❗️ Ошибка: ID {group_id} не является группой")
                 return None
+            
+            bot_member = bot.get_chat_member(group_id, bot.get_me().id)
+            logger.info(f"Статус бота в группе: {bot_member.status}")
+            logger.info(f"Права бота: {bot_member.__dict__}")
+            
+            if bot_member.status not in ['administrator', 'creator']:
+                logger.error("У бота недостаточно прав")
+                bot.send_message(settings.OWNER_ID, f"❗️ Бот должен быть администратором группы. Текущий статус: {bot_member.status}")
+                return None
+                
         except Exception as e:
-            logger.error(f"Ошибка при проверке прав бота: {e}")
+            logger.error(f"Ошибка при проверке группы: {e}")
+            bot.send_message(settings.OWNER_ID, f"❗️ Ошибка при проверке группы: {str(e)}")
             return None
 
         # Создаем ссылку для приватной группы
         try:
-            # Создаем ссылку без ограничения по времени, только по количеству использований
+            from datetime import datetime, timedelta
+            expire_date = datetime.now() + timedelta(days=1)
+            
+            # Пробуем создать ссылку с разными параметрами
             invite = bot.create_chat_invite_link(
                 chat_id=group_id,
-                member_limit=1,  # Ограничение на одно использование
-                expire_date=None,  # Без ограничения по времени
-                creates_join_request=False  # Разрешаем прямой вход без запроса
+                name=f"Invite for {user_id}",
+                expire_date=expire_date,
+                member_limit=1,
+                creates_join_request=False
             )
             
-            if invite and invite.invite_link:
-                logger.info(f"Успешно создана ссылка для приватной группы: {invite.invite_link}")
-                return invite.invite_link
-            else:
-                logger.error("Не удалось получить ссылку после создания")
-                return None
+            if not invite or not invite.invite_link:
+                logger.error("Не удалось создать ссылку первым способом, пробуем альтернативный метод")
+                # Пробуем альтернативный метод
+                invite_link = bot.export_chat_invite_link(group_id)
+                if invite_link:
+                    logger.info(f"Создана ссылка альтернативным методом: {invite_link}")
+                    return invite_link
+                else:
+                    logger.error("Не удалось создать ссылку альтернативным методом")
+                    return None
+            
+            logger.info(f"Создана ссылка: {invite.invite_link}")
+            logger.info(f"Параметры: name={invite.name}, expires={invite.expire_date}, limit={invite.member_limit}")
+            
+            # Проверяем созданную ссылку
+            try:
+                invite_info = bot.get_chat_invite_link(group_id, invite.invite_link)
+                logger.info(f"Проверка ссылки: {invite_info.__dict__}")
+            except Exception as e:
+                logger.warning(f"Не удалось проверить созданную ссылку: {e}")
+            
+            return invite.invite_link
                 
         except Exception as e:
-            logger.error(f"Ошибка при создании ссылки: {e}")
+            error_msg = f"Ошибка при создании ссылки: {str(e)}"
+            logger.error(error_msg)
+            bot.send_message(settings.OWNER_ID, f"❗️ {error_msg}\nUser ID: {user_id}\nGroup ID: {group_id}")
             return None
             
     except Exception as e:
@@ -281,6 +318,30 @@ def check_payment_status(operation_id):
         logger.error(f"Ошибка при проверке статуса платежа: {e}")
         return None, str(e)
 
+def remove_from_blacklist(user_id):
+    """Удаляет пользователя из черного списка группы"""
+    from django.conf import settings
+    try:
+        group_id = settings.GROUP_ID
+        logger.info(f"Попытка удаления пользователя {user_id} из черного списка группы {group_id}")
+        
+        try:
+            # Пробуем разблокировать пользователя
+            bot.unban_chat_member(
+                chat_id=group_id,
+                user_id=user_id,
+                only_if_banned=True  # Разблокируем только если пользователь действительно заблокирован
+            )
+            logger.info(f"Пользователь {user_id} успешно удален из черного списка")
+            return True
+        except Exception as e:
+            logger.info(f"Пользователь {user_id} не был в черном списке или произошла ошибка: {e}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Ошибка при удалении из черного списка: {e}")
+        return False
+
 def handle_successful_payment(user, call=None, message=None):
     """Обрабатывает успешную оплату"""
     from django.utils import timezone
@@ -292,6 +353,9 @@ def handle_successful_payment(user, call=None, message=None):
         user.subscription_end = now + timezone.timedelta(days=30)
     user.is_subscribed = True
     user.save()
+    
+    # Удаляем пользователя из черного списка если он там есть
+    remove_from_blacklist(user.telegram_id)
     
     invite_link = send_invite_link(user.telegram_id)
     if invite_link:
@@ -639,6 +703,9 @@ def activate_promo(message: Message):
     promo.used_by = user
     promo.save()
     
+    # Удаляем пользователя из черного списка если он там есть
+    remove_from_blacklist(message.from_user.id)
+    
     # Создаем и отправляем одноразовую ссылку
     invite_link = send_invite_link(message.from_user.id)
     if invite_link:
@@ -748,3 +815,54 @@ def back_to_menu_callback(call: CallbackQuery):
     except Exception:
         bot.send_message(call.from_user.id, START_TEXT, reply_markup=markup)
     bot.answer_callback_query(call.id) 
+
+# Тестовый обработчик для создания инвайт-ссылок
+@bot.message_handler(commands=['link'])
+def test_invite_link(message: Message):
+    """Тестовая команда для создания инвайт-ссылок"""
+    from django.conf import settings
+    
+    # Проверяем, является ли пользователь администратором
+    if str(message.from_user.id) != str(settings.OWNER_ID):
+        bot.reply_to(message, "Эта команда доступна только администратору.")
+        return
+        
+    invite_link = send_invite_link(message.from_user.id)
+    if invite_link:
+        bot.reply_to(
+            message,
+            f"✅ Тестовая ссылка создана успешно!\n\n"
+            f"Ссылка: {invite_link}\n\n"
+            f"Попробуйте перейти по ней и сообщить результат."
+        )
+    else:
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Повторить", callback_data="retry_link"))
+        bot.reply_to(
+            message,
+            "❌ Ошибка при создании ссылки. Проверьте права бота в группе и настройки.",
+            reply_markup=markup
+        )
+
+@bot.callback_query_handler(func=lambda call: call.data == "retry_link")
+def retry_link_callback(call: CallbackQuery):
+    """Повторная попытка создания ссылки"""
+    invite_link = send_invite_link(call.from_user.id)
+    if invite_link:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"✅ Тестовая ссылка создана успешно!\n\n"
+                 f"Ссылка: {invite_link}\n\n"
+                 f"Попробуйте перейти по ней и сообщить результат."
+        )
+    else:
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Повторить", callback_data="retry_link"))
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ Ошибка при создании ссылки. Проверьте права бота в группе и настройки.",
+            reply_markup=markup
+        ) 
