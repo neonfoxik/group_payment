@@ -236,6 +236,70 @@ def cancel_email_callback(call: CallbackQuery):
     bot.clear_step_handler_by_chat_id(call.from_user.id)
     bot.answer_callback_query(call.id)
 
+def check_payment_status(operation_id):
+    """Проверяет статус платежа и возвращает (status, error)"""
+    from django.conf import settings
+    api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
+    headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
+    
+    try:
+        resp = requests.get(api_url, headers=headers)
+        if resp.status_code != 200:
+            logger.error(f"Ошибка API Точка при проверке платежа: {resp.status_code} {resp.text}")
+            return None, f"Ошибка API Точка: {resp.status_code}"
+            
+        data = resp.json().get('Data', {})
+        operation_list = data.get('Operation')
+        
+        if isinstance(operation_list, list) and operation_list:
+            status = operation_list[0].get('status')
+        else:
+            status = data.get('status')
+            
+        if not status:
+            logger.error(f"Статус платежа не найден в ответе API: {data}")
+            return None, "Статус платежа не найден"
+            
+        return status, None
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке статуса платежа: {e}")
+        return None, str(e)
+
+def handle_successful_payment(user, call=None, message=None):
+    """Обрабатывает успешную оплату"""
+    from django.utils import timezone
+    user.operation_id = None
+    now = timezone.now()
+    if user.subscription_end and user.subscription_end > now:
+        user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
+    else:
+        user.subscription_end = now + timezone.timedelta(days=30)
+    user.is_subscribed = True
+    user.save()
+    
+    invite_link = send_invite_link(user.telegram_id)
+    if invite_link:
+        thanks_text = THANKS_PAYMENT.format(invite_link=invite_link)
+    else:
+        thanks_text = "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
+    
+    if call:
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=thanks_text,
+                reply_markup=markup
+            )
+        except Exception:
+            bot.send_message(call.from_user.id, thanks_text, reply_markup=markup)
+    elif message:
+        bot.send_message(message.from_user.id, thanks_text, reply_markup=markup)
+
 def start_registration(message: Message):
     user, created = register_user(message)
     from bot.texts import START_TEXT
@@ -260,15 +324,35 @@ def start_registration(message: Message):
     logger.info(f"Статус подписки пользователя {message.from_user.id}: {'активна' if is_active else 'неактивна'}")
     logger.info(f"Текущий operation_id: {user.operation_id}")
 
-    # Всегда создаем новую ссылку на оплату
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
-    
-    if operation_id:
-        logger.info(f"Создана новая ссылка на оплату для пользователя {message.from_user.id}: {payment_link}")
-        user.operation_id = operation_id
-        user.save()
-    else:
-        logger.error(f"Ошибка создания ссылки на оплату для пользователя {message.from_user.id}: {error}")
+    payment_link = None
+    # Проверяем статус существующего платежа
+    if user.operation_id:
+        status, error = check_payment_status(user.operation_id)
+        if error:
+            logger.error(f"Ошибка при проверке статуса платежа: {error}")
+            user.operation_id = None
+            user.save()
+        elif status == 'APPROVED':
+            # Если платеж уже оплачен, обрабатываем его как успешный
+            handle_successful_payment(user, message=message)
+            return
+        elif status in ['PENDING', 'PROCESSING']:
+            # Если платеж в процессе, используем существующую ссылку
+            payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+        else:
+            # Если платеж отменен или истек, создаем новый
+            user.operation_id = None
+            user.save()
+
+    # Создаем новую ссылку только если нет активной
+    if not payment_link:
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+        if operation_id:
+            logger.info(f"Создана новая ссылка на оплату для пользователя {message.from_user.id}: {payment_link}")
+            user.operation_id = operation_id
+            user.save()
+        else:
+            logger.error(f"Ошибка создания ссылки на оплату для пользователя {message.from_user.id}: {error}")
 
     markup = InlineKeyboardMarkup()
     if payment_link:
@@ -425,94 +509,57 @@ def check_payment_callback(call: CallbackQuery):
                 bot.send_message(call.from_user.id, error_text, reply_markup=markup)
             return
 
-    api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{user.operation_id}"
-    headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
+    # Проверяем статус существующего платежа
+    status, error = check_payment_status(user.operation_id)
     
-    try:
-        resp = requests.get(api_url, headers=headers)
-        if resp.status_code != 200:
-            logger.error(f"Ошибка API Точка при проверке платежа: {resp.status_code} {resp.text}")
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Произошла ошибка при проверке платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку @it_jget",
-                reply_markup=markup
-            )
-            return
-            
-        data = resp.json().get('Data', {})
-        operation_list = data.get('Operation')
-        
-        if isinstance(operation_list, list) and operation_list:
-            status = operation_list[0].get('status')
-            amount = operation_list[0].get('amount')
-        else:
-            status = data.get('status')
-            amount = data.get('amount')
-            
-        if not status:
-            logger.error(f"Статус платежа не найден в ответе API: {data}")
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Не удалось получить статус платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку @it_jget",
-                reply_markup=markup
-            )
-            return
-            
-        if status == 'APPROVED':
-            user.operation_id = None
-            now = timezone.now()
-            if user.subscription_end and user.subscription_end > now:
-                user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
-            else:
-                user.subscription_end = now + timezone.timedelta(days=30)
-            user.is_subscribed = True
-            user.save()
-            
-            try:
-                invite_link = send_invite_link(user.telegram_id)
-                if invite_link:
-                    thanks_text = THANKS_PAYMENT.format(invite_link=invite_link)
-                else:
-                    thanks_text = "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
-                bot.edit_message_text(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    text=thanks_text,
-                    reply_markup=markup
-                )
-            except Exception as e:
-                logger.error(f"Ошибка при отправке ссылки-приглашения: {e}")
-                bot.send_message(
-                    call.from_user.id,
-                    "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget",
-                    reply_markup=markup
-                )
-        elif status in ['REJECTED', 'CANCELLED', 'EXPIRED']:
-            user.operation_id = None
-            user.save()
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Платеж был отменен или отклонен. Пожалуйста, попробуйте создать новый платеж.",
-                reply_markup=markup
-            )
-        else:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Платеж все еще в обработке. Пожалуйста, подождите несколько минут и проверьте снова. Если проблема сохраняется более 3 часов после оплаты - напишите нам @it_jget",
-                reply_markup=markup
-            )
-    except Exception as e:
-        logger.exception(f"Ошибка при проверке статуса платежа: {e}")
+    if error:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Произошла ошибка при проверке платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку @it_jget",
+            text=f"Произошла ошибка при проверке платежа: {error}",
             reply_markup=markup
         )
+        return
+        
+    if status == 'APPROVED':
+        # Обрабатываем успешный платеж
+        handle_successful_payment(user, call=call)
+    elif status in ['PENDING', 'PROCESSING']:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Платеж находится в обработке. Пожалуйста, подождите или попробуйте проверить позже.",
+            reply_markup=markup
+        )
+    else:
+        # Платеж отменен или истек, создаем новый
+        user.operation_id = None
+        user.save()
+        is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
+        purpose = "Продление подписки" if is_active else "Оплата подписки"
+        button_text = "Продлить подписку" if is_active else "Оплатить"
+        
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        if payment_link and operation_id:
+            user.operation_id = operation_id
+            user.save()
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton(button_text, url=payment_link))
+            markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+            markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Предыдущий платеж был отменен. Создана новая ссылка для оплаты.",
+                reply_markup=markup
+            )
+        else:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"Ошибка при создании новой ссылки на оплату: {error if error else ''}",
+                reply_markup=markup
+            )
 
 @bot.message_handler(commands=['promo'])
 def ask_promo(message: Message):
