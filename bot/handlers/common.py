@@ -146,15 +146,18 @@ def get_payment_link_for_user(user_id, amount=1, purpose="Оплата подп�
     user = User.objects.filter(telegram_id=str(user_id)).first()
     if not user or not user.email:
         return None, None, "Email пользователя не найден. Пожалуйста, укажите email через /email."
-    if user.operation_id:
-        # Восстановить ссылку по старому operation_id
+    
+    # Всегда создаем новую ссылку, если нет активной
+    if not user.operation_id:
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
+        if operation_id:
+            user.operation_id = operation_id
+            user.save()
+        return payment_link, operation_id, error
+    else:
+        # Если есть активный платеж, возвращаем его ссылку
         payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
         return payment_link, user.operation_id, None
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
-    if operation_id:
-        user.operation_id = operation_id
-        user.save()
-    return payment_link, operation_id, error
 
 def get_status_text(user):
     is_active, date, days = get_subscription_status(user)
@@ -227,13 +230,19 @@ def start_registration(message: Message):
         return
     # Проверяем статус подписки
     is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
-    if is_active:
-        button_text = "Продлить подписку"
-        purpose = "Продление подписки"
+    button_text = "Продлить подписку" if is_active else "Оплатить"
+    purpose = "Продление подписки" if is_active else "Оплата подписки"
+
+    # Если нет активного платежа, создаем новый
+    if not user.operation_id:
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        if operation_id:
+            user.operation_id = operation_id
+            user.save()
     else:
-        button_text = "Оплатить"
-        purpose = "Оплата подписки"
-    payment_link, operation_id, error = get_payment_link_for_user(user.telegram_id, 1, purpose)
+        # Проверяем существующий платеж
+        payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+
     markup = InlineKeyboardMarkup()
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
