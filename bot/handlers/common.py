@@ -300,6 +300,33 @@ def handle_successful_payment(user, call=None, message=None):
     elif message:
         bot.send_message(message.from_user.id, thanks_text, reply_markup=markup)
 
+def get_existing_payment_link(operation_id):
+    """Получает ссылку на оплату для существующего платежа"""
+    from django.conf import settings
+    api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{operation_id}"
+    headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
+    
+    try:
+        response = requests.get(api_url, headers=headers)
+        if response.status_code == 200:
+            data = response.json().get('Data', {})
+            if isinstance(data.get('Operation'), list):
+                payment_link = data['Operation'][0].get('paymentLink')
+            else:
+                payment_link = data.get('paymentLink')
+            
+            if payment_link:
+                return payment_link
+            else:
+                logger.error(f"Не удалось получить paymentLink из ответа API: {data}")
+                return None
+        else:
+            logger.error(f"Ошибка при получении ссылки на оплату: {response.status_code} {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Исключение при получении ссылки на оплату: {e}")
+        return None
+
 def start_registration(message: Message):
     user, created = register_user(message)
     from bot.texts import START_TEXT
@@ -325,8 +352,9 @@ def start_registration(message: Message):
     logger.info(f"Текущий operation_id: {user.operation_id}")
 
     markup = InlineKeyboardMarkup()
+    payment_link = None
 
-    # Если есть operation_id, проверяем его статус
+    # Проверяем существующий платеж
     if user.operation_id:
         status, error = check_payment_status(user.operation_id)
         logger.info(f"Статус платежа {user.operation_id}: {status}")
@@ -345,9 +373,16 @@ def start_registration(message: Message):
                 user.operation_id = operation_id
                 user.save()
         else:
-            # В любом другом случае (PENDING, PROCESSING или ошибка проверки) - используем существующую ссылку
-            logger.info("Используем существующую ссылку")
-            payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+            # В любом другом случае (PENDING, PROCESSING или ошибка проверки) - получаем существующую ссылку
+            logger.info("Получаем существующую ссылку")
+            payment_link = get_existing_payment_link(user.operation_id)
+            if not payment_link:
+                # Если не удалось получить существующую ссылку - создаем новую
+                logger.info("Не удалось получить существующую ссылку, создаем новую")
+                payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+                if operation_id:
+                    user.operation_id = operation_id
+                    user.save()
     else:
         # Если нет operation_id - создаем новый платеж
         logger.info("Нет operation_id, создаем новый платеж")
@@ -549,7 +584,11 @@ def check_payment_callback(call: CallbackQuery):
                 reply_markup=markup
             )
     else:
-        # В любом другом случае (PENDING, PROCESSING или ошибка) - сообщаем о текущем статусе
+        # В любом другом случае (PENDING, PROCESSING или ошибка) - получаем существующую ссылку
+        payment_link = get_existing_payment_link(user.operation_id)
+        if payment_link:
+            markup.add(InlineKeyboardButton("Перейти к оплате", url=payment_link))
+        
         status_text = "Платеж находится в обработке. Пожалуйста, подождите или попробуйте проверить позже."
         if error:
             status_text = f"Произошла ошибка при проверке платежа: {error}"
@@ -629,7 +668,6 @@ def check_status_callback(call: CallbackQuery):
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
 def back_to_menu_callback(call: CallbackQuery):
-    # Повторно показываем стартовое меню с кнопками через edit_message_text
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     from bot.texts import START_TEXT
     from django.utils import timezone
@@ -661,9 +699,16 @@ def back_to_menu_callback(call: CallbackQuery):
                 user.operation_id = operation_id
                 user.save()
         else:
-            # В любом другом случае (PENDING, PROCESSING или ошибка проверки) - используем существующую ссылку
-            logger.info("Используем существующую ссылку")
-            payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+            # В любом другом случае (PENDING, PROCESSING или ошибка проверки) - получаем существующую ссылку
+            logger.info("Получаем существующую ссылку")
+            payment_link = get_existing_payment_link(user.operation_id)
+            if not payment_link:
+                # Если не удалось получить существующую ссылку - создаем новую
+                logger.info("Не удалось получить существующую ссылку, создаем новую")
+                payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+                if operation_id:
+                    user.operation_id = operation_id
+                    user.save()
     else:
         # Если нет operation_id - создаем новый платеж
         logger.info("Нет operation_id, создаем новый платеж")
