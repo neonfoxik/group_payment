@@ -3,7 +3,7 @@ from bot.bot_instance import bot
 from bot.keyboards import main_markup, main_inline_markup
 from telebot.types import Message, CallbackQuery
 from django.conf import settings
-from bot.texts import START_TEXT, STATUS_ACTIVE, STATUS_INACTIVE, THANKS_PAYMENT
+from bot.texts import START_TEXT, STATUS_ACTIVE, STATUS_INACTIVE, THANKS_PAYMENT, PAY_TEXT
 import requests
 import json
 import uuid
@@ -304,60 +304,116 @@ def check_payment_callback(call: CallbackQuery):
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
-    if not user or not user.operation_id:
+    
+    if not user:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Пользователь не найден. Пожалуйста, начните с команды /start",
+            reply_markup=markup
+        )
+        return
+        
+    if not user.operation_id:
         try:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget",
+                text="У вас нет активного платежа. Пожалуйста, нажмите кнопку 'Оплатить' для создания нового платежа.",
                 reply_markup=markup
             )
         except Exception:
-            bot.send_message(call.from_user.id, "Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget", reply_markup=markup)
+            bot.send_message(
+                call.from_user.id, 
+                "У вас нет активного платежа. Пожалуйста, нажмите кнопку 'Оплатить' для создания нового платежа.", 
+                reply_markup=markup
+            )
         return
+
     api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{user.operation_id}"
     headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
-    resp = requests.get(api_url, headers=headers)
-    approved = False
-    if resp.status_code == 200:
+    
+    try:
+        resp = requests.get(api_url, headers=headers)
+        if resp.status_code != 200:
+            logger.error(f"Ошибка API Точка при проверке платежа: {resp.status_code} {resp.text}")
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Произошла ошибка при проверке платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку @it_jget",
+                reply_markup=markup
+            )
+            return
+            
         data = resp.json().get('Data', {})
         operation_list = data.get('Operation')
+        
         if isinstance(operation_list, list) and operation_list:
             status = operation_list[0].get('status')
+            amount = operation_list[0].get('amount')
         else:
             status = data.get('status')
+            amount = data.get('amount')
+            
+        if not status:
+            logger.error(f"Статус платежа не найден в ответе API: {data}")
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Не удалось получить статус платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку @it_jget",
+                reply_markup=markup
+            )
+            return
+            
         if status == 'APPROVED':
-            approved = True
-    if approved:
-        user.operation_id = None
-        now = timezone.now()
-        if user.subscription_end and user.subscription_end > now:
-            user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
+            user.operation_id = None
+            now = timezone.now()
+            if user.subscription_end and user.subscription_end > now:
+                user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
+            else:
+                user.subscription_end = now + timezone.timedelta(days=30)
+            user.is_subscribed = True
+            user.save()
+            
+            try:
+                send_invite_link(user.telegram_id)
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=THANKS_PAYMENT,
+                    reply_markup=markup
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при отправке ссылки-приглашения: {e}")
+                bot.send_message(
+                    call.from_user.id,
+                    THANKS_PAYMENT,
+                    reply_markup=markup
+                )
+        elif status in ['REJECTED', 'CANCELLED', 'EXPIRED']:
+            user.operation_id = None
+            user.save()
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Платеж был отменен или отклонен. Пожалуйста, попробуйте создать новый платеж.",
+                reply_markup=markup
+            )
         else:
-            user.subscription_end = now + timezone.timedelta(days=30)
-        user.is_subscribed = True
-        user.save()
-        send_invite_link(user.telegram_id)
-        try:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Спасибо за оплату! Вот ваша ссылка для вступления: ...",
+                text="Платеж все еще в обработке. Пожалуйста, подождите несколько минут и проверьте снова. Если проблема сохраняется более 3 часов после оплаты - напишите нам @it_jget",
                 reply_markup=markup
             )
-        except Exception:
-            bot.send_message(call.from_user.id, "Спасибо за оплату! Вот ваша ссылка для вступления: ...", reply_markup=markup)
-        return
-    else:
-        try:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget",
-                reply_markup=markup
-            )
-        except Exception:
-            bot.send_message(call.from_user.id, "Пока данных о вашей оплате нет. Если это продолжается более 3 часов после оплаты - напишите нам @it_jget", reply_markup=markup)
+    except Exception as e:
+        logger.exception(f"Ошибка при проверке статуса платежа: {e}")
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Произошла ошибка при проверке платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку @it_jget",
+            reply_markup=markup
+        )
 
 @bot.message_handler(commands=['promo'])
 def ask_promo(message: Message):
