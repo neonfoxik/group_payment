@@ -123,7 +123,6 @@ def send_invite_link(user_id):
             chat_info = bot.get_chat(group_id)
             logger.info(f"Тип группы: {chat_info.type}")
             logger.info(f"Название группы: {chat_info.title}")
-            logger.info(f"Приватность: {getattr(chat_info, 'is_private', False)}")
             
             if chat_info.type not in ['group', 'supergroup']:
                 logger.error(f"Неверный тип чата: {chat_info.type}")
@@ -132,7 +131,6 @@ def send_invite_link(user_id):
             
             bot_member = bot.get_chat_member(group_id, bot.get_me().id)
             logger.info(f"Статус бота в группе: {bot_member.status}")
-            logger.info(f"Права бота: {bot_member.__dict__}")
             
             if bot_member.status not in ['administrator', 'creator']:
                 logger.error("У бота недостаточно прав")
@@ -146,38 +144,21 @@ def send_invite_link(user_id):
 
         # Создаем ссылку для приватной группы
         try:
-            from datetime import datetime, timedelta
-            expire_date = datetime.now() + timedelta(days=1)
-            
-            # Пробуем создать ссылку с разными параметрами
+            # Создаем бессрочную ссылку с ограничением на один переход
             invite = bot.create_chat_invite_link(
                 chat_id=group_id,
-                name=f"Invite for {user_id}",
-                expire_date=expire_date,
-                member_limit=1,
-                creates_join_request=False
+                name=f"Invite for user {user_id}",  # Добавляем имя для отслеживания
+                member_limit=1,  # Ограничение на один переход
+                expire_date=None,  # Бессрочная ссылка
+                creates_join_request=False  # Разрешаем прямой вход без запроса
             )
             
             if not invite or not invite.invite_link:
-                logger.error("Не удалось создать ссылку первым способом, пробуем альтернативный метод")
-                # Пробуем альтернативный метод
-                invite_link = bot.export_chat_invite_link(group_id)
-                if invite_link:
-                    logger.info(f"Создана ссылка альтернативным методом: {invite_link}")
-                    return invite_link
-                else:
-                    logger.error("Не удалось создать ссылку альтернативным методом")
-                    return None
+                logger.error("Не удалось создать ссылку")
+                return None
             
             logger.info(f"Создана ссылка: {invite.invite_link}")
-            logger.info(f"Параметры: name={invite.name}, expires={invite.expire_date}, limit={invite.member_limit}")
-            
-            # Проверяем созданную ссылку
-            try:
-                invite_info = bot.get_chat_invite_link(group_id, invite.invite_link)
-                logger.info(f"Проверка ссылки: {invite_info.__dict__}")
-            except Exception as e:
-                logger.warning(f"Не удалось проверить созданную ссылку: {e}")
+            logger.info(f"Параметры: name={invite.name}, limit={invite.member_limit}, expires={invite.expire_date}")
             
             return invite.invite_link
                 
