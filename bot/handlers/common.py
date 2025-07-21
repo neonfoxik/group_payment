@@ -330,8 +330,6 @@ def start_registration(message: Message):
         status, error = check_payment_status(user.operation_id)
         if error:
             logger.error(f"Ошибка при проверке статуса платежа: {error}")
-            user.operation_id = None
-            user.save()
         elif status == 'APPROVED':
             # Если платеж уже оплачен, обрабатываем его как успешный
             handle_successful_payment(user, message=message)
@@ -339,13 +337,15 @@ def start_registration(message: Message):
         elif status in ['PENDING', 'PROCESSING']:
             # Если платеж в процессе, используем существующую ссылку
             payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+            logger.info(f"Используем существующую ссылку на оплату: {payment_link}")
         else:
-            # Если платеж отменен или истек, создаем новый
+            # Если платеж отменен или истек, очищаем operation_id
+            logger.info(f"Платеж {user.operation_id} имеет статус {status}, создадим новый")
             user.operation_id = None
             user.save()
 
     # Создаем новую ссылку только если нет активной
-    if not payment_link:
+    if not payment_link and not user.operation_id:
         payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
         if operation_id:
             logger.info(f"Создана новая ссылка на оплату для пользователя {message.from_user.id}: {payment_link}")
@@ -353,6 +353,10 @@ def start_registration(message: Message):
             user.save()
         else:
             logger.error(f"Ошибка создания ссылки на оплату для пользователя {message.from_user.id}: {error}")
+    elif not payment_link and user.operation_id:
+        # Если есть operation_id, но не удалось получить статус - используем существующую ссылку
+        payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+        logger.info(f"Используем существующую ссылку при ошибке проверки статуса: {payment_link}")
 
     markup = InlineKeyboardMarkup()
     if payment_link:
