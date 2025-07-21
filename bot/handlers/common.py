@@ -54,9 +54,6 @@ def create_tochka_payment_link_with_receipt(user_id, amount, purpose, email):
 
     url = "https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt"
     
-    # Формируем корректный URL для редиректа
-    redirect_url = f"/bot/tochka_payment_webhook/?user_id={user_id}"
-    
     payload = {
         "Data": {
             "customerCode": settings.TOCHKA_CUSTOMER_CODE,
@@ -64,7 +61,6 @@ def create_tochka_payment_link_with_receipt(user_id, amount, purpose, email):
             "amount": amount,
             "purpose": purpose,
             "paymentMode": ["sbp", "card"],
-            "redirectUrl": redirect_url,  # Используем относительный URL без домена
             "Client": {
                 "email": email
             },
