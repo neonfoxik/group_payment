@@ -49,7 +49,9 @@ def create_tochka_payment_link_with_receipt(user_id, amount, purpose, email):
     if not merchant_id:
         merchant_id, error = get_merchant_id()
         if not merchant_id:
+            logger.error(f"Не удалось получить merchantId: {error}")
             return None, None, f"Не удалось получить merchantId: {error}"
+
     url = "https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt"
     payload = {
         "Data": {
@@ -75,22 +77,39 @@ def create_tochka_payment_link_with_receipt(user_id, amount, purpose, email):
             ]
         }
     }
-    print("payload:", payload)  # Логируем payload для отладки
+    logger.info(f"Создаем новую ссылку на оплату для пользователя {user_id}")
+    logger.info(f"Payload: {payload}")
+    
     headers = {
         "Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}",
         "Content-Type": "application/json"
     }
+    
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response = requests.post(url, headers=headers, json=payload)
+        logger.info(f"Ответ API Точка: {response.status_code} {response.text}")
+        
         if response.status_code == 200:
-            data = response.json().get("Data", {})
-            return data.get("paymentLink"), data.get("operationId"), None
+            data = response.json().get('Data', {})
+            operation_id = data.get('operationId')
+            payment_link = data.get('paymentLink')
+            
+            if operation_id and payment_link:
+                logger.info(f"Успешно создана ссылка на оплату: {payment_link}")
+                return payment_link, operation_id, None
+            else:
+                error_msg = "Не удалось получить operationId или paymentLink из ответа API"
+                logger.error(f"{error_msg}. Ответ: {data}")
+                return None, None, error_msg
         else:
-            logger.error(f"Ошибка API Точка: {response.status_code} {response.text}")
-            return None, None, f"Ошибка API Точка: {response.status_code} {response.text}"
+            error_msg = f"Ошибка API Точка: {response.status_code} {response.text}"
+            logger.error(error_msg)
+            return None, None, error_msg
+            
     except Exception as e:
-        logger.exception("Ошибка при создании платёжной ссылки через API Точка")
-        return None, None, f"Исключение: {str(e)}"
+        error_msg = f"Исключение при создании ссылки на оплату: {str(e)}"
+        logger.error(error_msg)
+        return None, None, error_msg
 
 
 def send_invite_link(user_id):
@@ -222,26 +241,34 @@ def start_registration(message: Message):
     from bot.texts import START_TEXT
     from bot.models import User
     from django.utils import timezone
+    
+    logger.info(f"Запуск start_registration для пользователя {message.from_user.id}")
+    
     if not user.email:
+        logger.info(f"У пользователя {message.from_user.id} нет email")
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("Отмена", callback_data="cancel_email"))
         bot.send_message(message.from_user.id, "Пожалуйста, введите ваш email для получения чека:", reply_markup=markup)
         bot.register_next_step_handler(message, save_email)
         return
+
     # Проверяем статус подписки
     is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
     button_text = "Продлить подписку" if is_active else "Оплатить"
     purpose = "Продление подписки" if is_active else "Оплата подписки"
+    
+    logger.info(f"Статус подписки пользователя {message.from_user.id}: {'активна' if is_active else 'неактивна'}")
+    logger.info(f"Текущий operation_id: {user.operation_id}")
 
-    # Если нет активного платежа, создаем новый
-    if not user.operation_id:
-        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
-        if operation_id:
-            user.operation_id = operation_id
-            user.save()
+    # Всегда создаем новую ссылку на оплату
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+    
+    if operation_id:
+        logger.info(f"Создана новая ссылка на оплату для пользователя {message.from_user.id}: {payment_link}")
+        user.operation_id = operation_id
+        user.save()
     else:
-        # Проверяем существующий платеж
-        payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+        logger.error(f"Ошибка создания ссылки на оплату для пользователя {message.from_user.id}: {error}")
 
     markup = InlineKeyboardMarkup()
     if payment_link:
@@ -249,11 +276,13 @@ def start_registration(message: Message):
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     markup.add(InlineKeyboardButton("Ввести промокод", callback_data="check_promo"))
     markup.add(InlineKeyboardButton("Статус подписки", callback_data="check_status"))
+    
     bot.send_message(
         message.from_user.id,
         START_TEXT,
         reply_markup=markup
     )
+    logger.info(f"Отправлено стартовое сообщение пользователю {message.from_user.id}")
 
 start = bot.message_handler(commands=["start"])(start_registration)
 
