@@ -633,19 +633,51 @@ def back_to_menu_callback(call: CallbackQuery):
     user = User.objects.filter(telegram_id=str(call.from_user.id)).first()
     from bot.texts import START_TEXT
     from django.utils import timezone
-    if user and user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now():
-        button_text = "Продлить подписку"
-        purpose = "Продление подписки"
-    else:
-        button_text = "Оплатить"
-        purpose = "Оплата подписки"
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email) if user and user.email else (None, None, None)
+
+    # Проверяем статус подписки
+    is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
+    button_text = "Продлить подписку" if is_active else "Оплатить"
+    purpose = "Продление подписки" if is_active else "Оплата подписки"
+
     markup = InlineKeyboardMarkup()
+    payment_link = None
+
+    # Проверяем существующий платеж
+    if user.operation_id:
+        status, error = check_payment_status(user.operation_id)
+        logger.info(f"Проверка статуса платежа {user.operation_id} при возврате в меню: {status}")
+        
+        if status == 'APPROVED':
+            # Если оплачен - выдаем ссылку на группу
+            handle_successful_payment(user, call=call)
+            return
+        elif status == 'REJECTED' or status == 'EXPIRED' or status == 'CANCELLED':
+            # Только если платеж точно отменен/отклонен/истек - создаем новый
+            logger.info("Платеж отменен/отклонен/истек, создаем новый")
+            user.operation_id = None
+            user.save()
+            payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+            if operation_id:
+                user.operation_id = operation_id
+                user.save()
+        else:
+            # В любом другом случае (PENDING, PROCESSING или ошибка проверки) - используем существующую ссылку
+            logger.info("Используем существующую ссылку")
+            payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+    else:
+        # Если нет operation_id - создаем новый платеж
+        logger.info("Нет operation_id, создаем новый платеж")
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        if operation_id:
+            user.operation_id = operation_id
+            user.save()
+
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
     markup.add(InlineKeyboardButton("Ввести промокод", callback_data="check_promo"))
     markup.add(InlineKeyboardButton("Статус подписки", callback_data="check_status"))
+    
     try:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
