@@ -323,6 +323,16 @@ def remove_from_blacklist(user_id):
         logger.error(f"Ошибка при удалении из черного списка: {e}")
         return False
 
+def check_user_in_group(user_id):
+    """Проверяет, находится ли пользователь в группе"""
+    from django.conf import settings
+    try:
+        member = bot.get_chat_member(settings.GROUP_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        logger.error(f"Ошибка при проверке членства пользователя {user_id} в группе: {e}")
+        return False
+
 def handle_successful_payment(user, call=None, message=None):
     """Обрабатывает успешную оплату"""
     from django.utils import timezone
@@ -338,11 +348,15 @@ def handle_successful_payment(user, call=None, message=None):
     # Удаляем пользователя из черного списка если он там есть
     remove_from_blacklist(user.telegram_id)
     
-    invite_link = send_invite_link(user.telegram_id)
-    if invite_link:
-        thanks_text = THANKS_PAYMENT.format(invite_link=invite_link)
+    # Проверяем, находится ли пользователь уже в группе
+    if check_user_in_group(user.telegram_id):
+        thanks_text = f"Спасибо за оплату! Ваша подписка продлена до {user.subscription_end.strftime('%d.%m.%Y')}."
     else:
-        thanks_text = "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
+        invite_link = send_invite_link(user.telegram_id)
+        if invite_link:
+            thanks_text = THANKS_PAYMENT.format(invite_link=invite_link)
+        else:
+            thanks_text = "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
     
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
@@ -687,18 +701,25 @@ def activate_promo(message: Message):
     # Удаляем пользователя из черного списка если он там есть
     remove_from_blacklist(message.from_user.id)
     
-    # Создаем и отправляем одноразовую ссылку
-    invite_link = send_invite_link(message.from_user.id)
-    if invite_link:
-        bot.send_message(
-            message.from_user.id, 
-            f"Промокод активирован! Вам выдан бесплатный доступ на 30 дней.\n\nВот ваша одноразовая ссылка для вступления в группу: {invite_link}"
-        )
-    else:
+    # Проверяем, находится ли пользователь уже в группе
+    if check_user_in_group(message.from_user.id):
         bot.send_message(
             message.from_user.id,
-            "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.\n\nК сожалению, произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
+            f"Промокод активирован! Ваша подписка продлена до {user.subscription_end.strftime('%d.%m.%Y')}."
         )
+    else:
+        # Создаем и отправляем одноразовую ссылку
+        invite_link = send_invite_link(message.from_user.id)
+        if invite_link:
+            bot.send_message(
+                message.from_user.id, 
+                f"Промокод активирован! Вам выдан бесплатный доступ на 30 дней.\n\nВот ваша одноразовая ссылка для вступления в группу: {invite_link}"
+            )
+        else:
+            bot.send_message(
+                message.from_user.id,
+                "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.\n\nК сожалению, произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
+            )
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_promo")
 def check_promo_callback(call: CallbackQuery):
