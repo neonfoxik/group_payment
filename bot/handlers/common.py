@@ -119,16 +119,23 @@ def send_invite_link(user_id):
         # Проверяем, есть ли у бота права администратора
         bot_member = bot.get_chat_member(group_id, bot.get_me().id)
         if not bot_member.can_invite_users:
-            logger.error("У бота нет прав на создание инвайт-ссылок")
+            logger.error("У бота нет прав на создания инвайт-ссылок")
             bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
             return None
+
+        # Добавляем срок действия 24 часа, чтобы ссылка точно была действительна
+        from datetime import datetime, timedelta
+        expire_date = int((datetime.now() + timedelta(days=1)).timestamp())
             
         # Создаем ссылку с ограничением в 1 использование
+        logger.info(f"Создаем ссылку для группы {group_id} с expire_date={expire_date}")
+        
         invite = bot.create_chat_invite_link(
-            group_id, 
-            member_limit=1,  # Ограничение на 1 использование
-            creates_join_request=False,  # Не требовать подтверждения входа
-            name=f"Invite for user {user_id}"  # Добавляем имя для удобства отслеживания
+            chat_id=group_id,
+            member_limit=1,
+            expire_date=expire_date,
+            creates_join_request=False,
+            name=f"Invite for user {user_id}"
         )
         
         if not invite or not invite.invite_link:
@@ -136,6 +143,14 @@ def send_invite_link(user_id):
             return None
             
         logger.info(f"Создана одноразовая ссылка для пользователя {user_id}: {invite.invite_link}")
+        
+        # Проверяем созданную ссылку
+        try:
+            invite_info = bot.get_chat(group_id)
+            logger.info(f"Информация о группе: {invite_info.title}, {invite_info.type}")
+        except Exception as e:
+            logger.error(f"Ошибка при проверке группы: {e}")
+        
         return invite.invite_link
         
     except Exception as e:
