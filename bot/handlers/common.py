@@ -104,7 +104,12 @@ def send_invite_link(user_id):
             bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
             return None
             
-        invite = bot.create_chat_invite_link(group_id, member_limit=1)
+        # Создаем ссылку только с ограничением на количество переходов
+        invite = bot.create_chat_invite_link(
+            group_id, 
+            member_limit=1,  # Ограничение на 1 переход
+            expire_date=None  # Убираем ограничение по времени
+        )
         invite_link = invite.invite_link
         if invite_link:
             return invite_link
@@ -451,7 +456,19 @@ def activate_promo(message: Message):
     promo.is_used = True
     promo.used_by = user
     promo.save()
-    bot.send_message(message.from_user.id, "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.") 
+    
+    # Создаем и отправляем одноразовую ссылку
+    invite_link = send_invite_link(message.from_user.id)
+    if invite_link:
+        bot.send_message(
+            message.from_user.id, 
+            f"Промокод активирован! Вам выдан бесплатный доступ на 30 дней.\n\nВот ваша одноразовая ссылка для вступления в группу: {invite_link}"
+        )
+    else:
+        bot.send_message(
+            message.from_user.id,
+            "Промокод активирован! Вам выдан бесплатный доступ на 30 дней.\n\nК сожалению, произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
+        )
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_promo")
 def check_promo_callback(call: CallbackQuery):
