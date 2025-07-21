@@ -251,7 +251,7 @@ def save_email(message: Message):
     else:
         button_text = "Оплатить"
         purpose = "Оплата подписки"
-    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+    payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
     if operation_id:
         user.operation_id = operation_id
         user.save()
@@ -442,7 +442,7 @@ def start_registration(message: Message):
             logger.info("Платеж отменен/отклонен/истек, создаем новый")
             user.operation_id = None
             user.save()
-            payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+            payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1000, purpose, user.email)
             if operation_id:
                 user.operation_id = operation_id
                 user.save()
@@ -453,14 +453,14 @@ def start_registration(message: Message):
             if not payment_link:
                 # Если не удалось получить существующую ссылку - создаем новую
                 logger.info("Не удалось получить существующую ссылку, создаем новую")
-                payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+                payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1000, purpose, user.email)
                 if operation_id:
                     user.operation_id = operation_id
                     user.save()
     else:
         # Если нет operation_id - создаем новый платеж
         logger.info("Нет operation_id, создаем новый платеж")
-        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1000, purpose, user.email)
         if operation_id:
             user.operation_id = operation_id
             user.save()
@@ -585,7 +585,7 @@ def check_payment_callback(call: CallbackQuery):
         button_text = "Продлить подписку" if is_active else "Оплатить"
 
         # Создаем новую ссылку на оплату
-        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
         if payment_link and operation_id:
             user.operation_id = operation_id
             user.save()
@@ -636,7 +636,7 @@ def check_payment_callback(call: CallbackQuery):
         purpose = "Продление подписки" if is_active else "Оплата подписки"
         button_text = "Продлить подписку" if is_active else "Оплатить"
         
-        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
         if payment_link and operation_id:
             user.operation_id = operation_id
             user.save()
@@ -778,7 +778,7 @@ def back_to_menu_callback(call: CallbackQuery):
             logger.info("Платеж отменен/отклонен/истек, создаем новый")
             user.operation_id = None
             user.save()
-            payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+            payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
             if operation_id:
                 user.operation_id = operation_id
                 user.save()
@@ -789,14 +789,14 @@ def back_to_menu_callback(call: CallbackQuery):
             if not payment_link:
                 # Если не удалось получить существующую ссылку - создаем новую
                 logger.info("Не удалось получить существующую ссылку, создаем новую")
-                payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+                payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
                 if operation_id:
                     user.operation_id = operation_id
                     user.save()
     else:
         # Если нет operation_id - создаем новый платеж
         logger.info("Нет operation_id, создаем новый платеж")
-        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1000, purpose, user.email)
         if operation_id:
             user.operation_id = operation_id
             user.save()
