@@ -123,38 +123,36 @@ def send_invite_link(user_id):
             bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
             return None
 
-        # Добавляем срок действия 24 часа, чтобы ссылка точно была действительна
-        from datetime import datetime, timedelta
-        expire_date = int((datetime.now() + timedelta(days=1)).timestamp())
-            
-        # Создаем ссылку с ограничением в 1 использование
-        logger.info(f"Создаем ссылку для группы {group_id} с expire_date={expire_date}")
+        # Создаем максимально простую ссылку с ограничением в 1 использование
+        logger.info(f"Создаем ссылку для группы {group_id}")
         
-        invite = bot.create_chat_invite_link(
-            chat_id=group_id,
-            member_limit=1,
-            expire_date=expire_date,
-            creates_join_request=False,
-            name=f"Invite for user {user_id}"
-        )
-        
-        if not invite or not invite.invite_link:
-            logger.error("Не удалось получить инвайт-ссылку после её создания")
-            return None
-            
-        logger.info(f"Создана одноразовая ссылка для пользователя {user_id}: {invite.invite_link}")
-        
-        # Проверяем созданную ссылку
+        # Пробуем создать обычную ссылку
         try:
-            invite_info = bot.get_chat(group_id)
-            logger.info(f"Информация о группе: {invite_info.title}, {invite_info.type}")
+            invite = bot.create_chat_invite_link(
+                chat_id=group_id,
+                member_limit=1
+            )
+            
+            if invite and invite.invite_link:
+                logger.info(f"Создана одноразовая ссылка для пользователя {user_id}: {invite.invite_link}")
+                return invite.invite_link
         except Exception as e:
-            logger.error(f"Ошибка при проверке группы: {e}")
-        
-        return invite.invite_link
-        
+            logger.error(f"Ошибка при создании обычной ссылки: {e}")
+            
+        # Если не получилось, пробуем создать через экспорт
+        try:
+            invite_link = bot.export_chat_invite_link(group_id)
+            if invite_link:
+                logger.info(f"Создана резервная ссылка для пользователя {user_id}: {invite_link}")
+                return invite_link
+        except Exception as e:
+            logger.error(f"Ошибка при создании резервной ссылки: {e}")
+            
+        logger.error("Не удалось создать ссылку обоими способами")
+        return None
+            
     except Exception as e:
-        logger.error(f"Ошибка при создании инвайт-ссылки: {e}")
+        logger.error(f"Общая ошибка при создании инвайт-ссылки: {e}")
         bot.send_message(settings.OWNER_ID, f"❗️ Ошибка при создании инвайт-ссылки для пользователя {user_id}: {e}")
         return None
 
