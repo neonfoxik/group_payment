@@ -193,7 +193,7 @@ def get_subscription_status(user):
         return True, user.subscription_end.strftime('%d.%m.%Y'), days
     return False, None, None
 
-def get_payment_link_for_user(user_id, amount=1, purpose="Оплата подписки"):
+def get_payment_link_for_user(user_id, amount=1000, purpose="Оплата подписки"):
     from bot.models import User
     user = User.objects.filter(telegram_id=str(user_id)).first()
     if not user or not user.email:
@@ -498,7 +498,7 @@ def handle_pay(message: Message, edit_message=False):
         else:
             bot.send_message(user_id, "Перед оплатой укажите ваш email с помощью команды /email")
         return
-    amount = 1
+    amount = 1000
     purpose = "Оплата подписки"
     payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user_id, amount, purpose, user.email)
     if payment_link:
