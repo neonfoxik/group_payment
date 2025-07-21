@@ -329,20 +329,63 @@ def check_payment_callback(call: CallbackQuery):
         return
         
     if not user.operation_id:
-        try:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="У вас нет активного платежа. Пожалуйста, нажмите кнопку 'Оплатить' для создания нового платежа.",
-                reply_markup=markup
-            )
-        except Exception:
-            bot.send_message(
-                call.from_user.id, 
-                "У вас нет активного платежа. Пожалуйста, нажмите кнопку 'Оплатить' для создания нового платежа.", 
-                reply_markup=markup
-            )
-        return
+        # Если нет активного платежа, создаем новый
+        if not user.email:
+            try:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text="Перед оплатой укажите ваш email с помощью команды /email",
+                    reply_markup=markup
+                )
+            except Exception:
+                bot.send_message(
+                    call.from_user.id,
+                    "Перед оплатой укажите ваш email с помощью команды /email",
+                    reply_markup=markup
+                )
+            return
+
+        # Определяем тип платежа
+        is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
+        purpose = "Продление подписки" if is_active else "Оплата подписки"
+        button_text = "Продлить подписку" if is_active else "Оплатить"
+
+        # Создаем новую ссылку на оплату
+        payment_link, operation_id, error = create_tochka_payment_link_with_receipt(user.telegram_id, 1, purpose, user.email)
+        if payment_link and operation_id:
+            user.operation_id = operation_id
+            user.save()
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton(button_text, url=payment_link))
+            markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
+            markup.add(InlineKeyboardButton("Назад", callback_data="back_to_menu"))
+            try:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=f"У вас нет активного платежа. Создана новая ссылка для оплаты.",
+                    reply_markup=markup
+                )
+            except Exception:
+                bot.send_message(
+                    call.from_user.id,
+                    f"У вас нет активного платежа. Создана новая ссылка для оплаты.",
+                    reply_markup=markup
+                )
+            return
+        else:
+            error_text = f"Произошла ошибка при создании ссылки на оплату.\n{error if error else ''}"
+            try:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=error_text,
+                    reply_markup=markup
+                )
+            except Exception:
+                bot.send_message(call.from_user.id, error_text, reply_markup=markup)
+            return
 
     api_url = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments/{user.operation_id}"
     headers = {"Authorization": f"Bearer {settings.TOCHKA_API_TOKEN}"}
