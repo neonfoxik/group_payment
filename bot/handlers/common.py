@@ -123,18 +123,21 @@ def send_invite_link(user_id):
             bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
             return None
             
-        # Создаем ссылку только с ограничением на количество переходов
+        # Создаем ссылку с ограничением в 1 использование
         invite = bot.create_chat_invite_link(
             group_id, 
-            member_limit=1,  # Ограничение на 1 переход
-            expire_date=None  # Убираем ограничение по времени
+            member_limit=1,  # Ограничение на 1 использование
+            creates_join_request=False,  # Не требовать подтверждения входа
+            name=f"Invite for user {user_id}"  # Добавляем имя для удобства отслеживания
         )
-        invite_link = invite.invite_link
-        if invite_link:
-            return invite_link
-        else:
+        
+        if not invite or not invite.invite_link:
             logger.error("Не удалось получить инвайт-ссылку после её создания")
             return None
+            
+        logger.info(f"Создана одноразовая ссылка для пользователя {user_id}: {invite.invite_link}")
+        return invite.invite_link
+        
     except Exception as e:
         logger.error(f"Ошибка при создании инвайт-ссылки: {e}")
         bot.send_message(settings.OWNER_ID, f"❗️ Ошибка при создании инвайт-ссылки для пользователя {user_id}: {e}")
