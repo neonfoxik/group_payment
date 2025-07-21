@@ -16,6 +16,9 @@ from bot.keyboards import main_markup
 from bot.texts import START_TEXT
 from telebot.types import Message, CallbackQuery
 from django.core.mail import send_mail
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Команда /start
 
@@ -92,36 +95,68 @@ def tochka_payment_webhook(request: HttpRequest) -> JsonResponse:
         operation_id = data.get('operationId')
         status = data.get('status')
         user_id = request.GET.get('user_id')
-        print(f'Webhook: operation_id={operation_id}, status={status}, user_id={user_id}')
+        
+        logger.info(f'Webhook: operation_id={operation_id}, status={status}, user_id={user_id}')
+        
+        if not operation_id:
+            logger.error('operation_id отсутствует в запросе')
+            return JsonResponse({"error": "operation_id missing"}, status=400)
+            
         if not user_id:
-            print('user_id отсутствует в запросе')
+            logger.error('user_id отсутствует в запросе')
             return JsonResponse({"error": "user_id missing"}, status=400)
+            
+        if not status:
+            logger.error('status отсутствует в запросе')
+            return JsonResponse({"error": "status missing"}, status=400)
+            
         if status == 'APPROVED':
             # Активируем подписку пользователя
             from bot.models import User
             from django.utils import timezone
             user = User.objects.filter(telegram_id=str(user_id)).first()
+            
+            if not user:
+                logger.error(f'Пользователь не найден: {user_id}')
+                return JsonResponse({"error": "user not found"}, status=404)
+                
+            # Проверяем, что operation_id совпадает с сохраненным у пользователя
+            if user.operation_id != operation_id:
+                logger.error(f'Operation ID не совпадает: {operation_id} != {user.operation_id}')
+                return JsonResponse({"error": "operation_id mismatch"}, status=400)
+                
             now = timezone.now()
-            if user:
-                if user.subscription_end and user.subscription_end > now:
-                    user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
-                else:
-                    user.subscription_end = now + timezone.timedelta(days=30)
-                user.is_subscribed = True
-                user.operation_id = None
-                user.save()
-                # Разбаниваем пользователя в группе
-                try:
-                    from bot.management.commands.ban_expired import GROUP_ID
-                    bot.unban_chat_member(GROUP_ID, int(user_id))
-                except Exception as e:
-                    print(f'Ошибка при разбане пользователя {user_id}: {e}')
-                send_invite_link(user_id)
-                return JsonResponse({"status": "invite sent"})
+            if user.subscription_end and user.subscription_end > now:
+                user.subscription_end = user.subscription_end + timezone.timedelta(days=30)
             else:
-                return JsonResponse({"status": f"not approved: {status}"})
+                user.subscription_end = now + timezone.timedelta(days=30)
+            user.is_subscribed = True
+            user.operation_id = None
+            user.save()
+            
+            # Разбаниваем пользователя в группе
+            try:
+                from bot.management.commands.ban_expired import GROUP_ID
+                bot.unban_chat_member(GROUP_ID, int(user_id))
+            except Exception as e:
+                logger.error(f'Ошибка при разбане пользователя {user_id}: {e}')
+            
+            # Отправляем инвайт
+            invite_link = send_invite_link(user_id)
+            if invite_link:
+                return JsonResponse({"status": "success", "invite_sent": True})
+            else:
+                return JsonResponse({"status": "success", "invite_sent": False, "error": "invite link creation failed"})
+        else:
+            # Для остальных статусов просто логируем
+            logger.info(f'Получен статус платежа: {status}')
+            return JsonResponse({"status": "received", "payment_status": status})
+            
+    except json.JSONDecodeError as e:
+        logger.error(f'Ошибка декодирования JSON в webhook: {e}')
+        return JsonResponse({"error": "invalid json"}, status=400)
     except Exception as e:
-        print(f'Ошибка в обработчике tochka_payment_webhook: {e}')
+        logger.exception(f'Ошибка в обработчике tochka_payment_webhook: {e}')
         return JsonResponse({"error": str(e)}, status=500)
 
 @require_GET

@@ -97,15 +97,24 @@ def send_invite_link(user_id):
     from django.conf import settings
     group_id = settings.GROUP_ID
     try:
+        # Проверяем, есть ли у бота права администратора
+        bot_member = bot.get_chat_member(group_id, bot.get_me().id)
+        if not bot_member.can_invite_users:
+            logger.error("У бота нет прав на создание инвайт-ссылок")
+            bot.send_message(settings.OWNER_ID, f"❗️ Бот не может создать инвайт-ссылку для пользователя {user_id}. Нет прав администратора в группе.")
+            return None
+            
         invite = bot.create_chat_invite_link(group_id, member_limit=1)
         invite_link = invite.invite_link
+        if invite_link:
+            return invite_link
+        else:
+            logger.error("Не удалось получить инвайт-ссылку после её создания")
+            return None
     except Exception as e:
-        print(f'Ошибка при создании инвайт-ссылки: {e}')
-        invite_link = None
-    if invite_link:
-        bot.send_message(user_id, f"Спасибо за оплату! Вот ваша ссылка для вступления: {invite_link}")
-    else:
-        bot.send_message(user_id, "Ошибка при создании ссылки для вступления. Обратитесь к администратору.")
+        logger.error(f"Ошибка при создании инвайт-ссылки: {e}")
+        bot.send_message(settings.OWNER_ID, f"❗️ Ошибка при создании инвайт-ссылки для пользователя {user_id}: {e}")
+        return None
 
 
 
@@ -376,18 +385,22 @@ def check_payment_callback(call: CallbackQuery):
             user.save()
             
             try:
-                send_invite_link(user.telegram_id)
+                invite_link = send_invite_link(user.telegram_id)
+                if invite_link:
+                    thanks_text = THANKS_PAYMENT.format(invite_link=invite_link)
+                else:
+                    thanks_text = "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget"
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
-                    text=THANKS_PAYMENT,
+                    text=thanks_text,
                     reply_markup=markup
                 )
             except Exception as e:
                 logger.error(f"Ошибка при отправке ссылки-приглашения: {e}")
                 bot.send_message(
                     call.from_user.id,
-                    THANKS_PAYMENT,
+                    "Спасибо за оплату! Произошла ошибка при создании ссылки для вступления. Пожалуйста, обратитесь к администратору @it_jget",
                     reply_markup=markup
                 )
         elif status in ['REJECTED', 'CANCELLED', 'EXPIRED']:
