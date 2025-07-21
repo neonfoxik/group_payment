@@ -324,41 +324,39 @@ def start_registration(message: Message):
     logger.info(f"Статус подписки пользователя {message.from_user.id}: {'активна' if is_active else 'неактивна'}")
     logger.info(f"Текущий operation_id: {user.operation_id}")
 
-    payment_link = None
-    # Проверяем статус существующего платежа
+    markup = InlineKeyboardMarkup()
+
+    # Если есть operation_id, проверяем его статус
     if user.operation_id:
         status, error = check_payment_status(user.operation_id)
-        if error:
-            logger.error(f"Ошибка при проверке статуса платежа: {error}")
-        elif status == 'APPROVED':
-            # Если платеж уже оплачен, обрабатываем его как успешный
+        logger.info(f"Статус платежа {user.operation_id}: {status}")
+        
+        if status == 'APPROVED':
+            # Если оплачен - выдаем ссылку на группу
             handle_successful_payment(user, message=message)
             return
-        elif status in ['PENDING', 'PROCESSING']:
-            # Если платеж в процессе, используем существующую ссылку
-            payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
-            logger.info(f"Используем существующую ссылку на оплату: {payment_link}")
-        else:
-            # Если платеж отменен или истек, очищаем operation_id
-            logger.info(f"Платеж {user.operation_id} имеет статус {status}, создадим новый")
+        elif status == 'REJECTED' or status == 'EXPIRED' or status == 'CANCELLED':
+            # Только если платеж точно отменен/отклонен/истек - создаем новый
+            logger.info("Платеж отменен/отклонен/истек, создаем новый")
             user.operation_id = None
             user.save()
-
-    # Создаем новую ссылку только если нет активной
-    if not payment_link and not user.operation_id:
+            payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
+            if operation_id:
+                user.operation_id = operation_id
+                user.save()
+        else:
+            # В любом другом случае (PENDING, PROCESSING или ошибка проверки) - используем существующую ссылку
+            logger.info("Используем существующую ссылку")
+            payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
+    else:
+        # Если нет operation_id - создаем новый платеж
+        logger.info("Нет operation_id, создаем новый платеж")
         payment_link, operation_id, error = create_tochka_payment_link_with_receipt(message.from_user.id, 1, purpose, user.email)
         if operation_id:
-            logger.info(f"Создана новая ссылка на оплату для пользователя {message.from_user.id}: {payment_link}")
             user.operation_id = operation_id
             user.save()
-        else:
-            logger.error(f"Ошибка создания ссылки на оплату для пользователя {message.from_user.id}: {error}")
-    elif not payment_link and user.operation_id:
-        # Если есть operation_id, но не удалось получить статус - используем существующую ссылку
-        payment_link = f"https://enter.tochka.com/uapi/acquiring/v1.0/payments_with_receipt/{user.operation_id}"
-        logger.info(f"Используем существующую ссылку при ошибке проверки статуса: {payment_link}")
 
-    markup = InlineKeyboardMarkup()
+    # Формируем сообщение с кнопками
     if payment_link:
         markup.add(InlineKeyboardButton(button_text, url=payment_link))
     markup.add(InlineKeyboardButton("Проверить оплату", callback_data="check_payment"))
@@ -515,30 +513,16 @@ def check_payment_callback(call: CallbackQuery):
 
     # Проверяем статус существующего платежа
     status, error = check_payment_status(user.operation_id)
+    logger.info(f"Проверка статуса платежа {user.operation_id}: {status}")
     
-    if error:
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=f"Произошла ошибка при проверке платежа: {error}",
-            reply_markup=markup
-        )
-        return
-        
     if status == 'APPROVED':
         # Обрабатываем успешный платеж
         handle_successful_payment(user, call=call)
-    elif status in ['PENDING', 'PROCESSING']:
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Платеж находится в обработке. Пожалуйста, подождите или попробуйте проверить позже.",
-            reply_markup=markup
-        )
-    else:
-        # Платеж отменен или истек, создаем новый
+    elif status == 'REJECTED' or status == 'EXPIRED' or status == 'CANCELLED':
+        # Только если платеж точно отменен/отклонен/истек - создаем новый
         user.operation_id = None
         user.save()
+        
         is_active = user.is_subscribed and user.subscription_end and user.subscription_end > timezone.now()
         purpose = "Продление подписки" if is_active else "Оплата подписки"
         button_text = "Продлить подписку" if is_active else "Оплатить"
@@ -564,6 +548,18 @@ def check_payment_callback(call: CallbackQuery):
                 text=f"Ошибка при создании новой ссылки на оплату: {error if error else ''}",
                 reply_markup=markup
             )
+    else:
+        # В любом другом случае (PENDING, PROCESSING или ошибка) - сообщаем о текущем статусе
+        status_text = "Платеж находится в обработке. Пожалуйста, подождите или попробуйте проверить позже."
+        if error:
+            status_text = f"Произошла ошибка при проверке платежа: {error}"
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=status_text,
+            reply_markup=markup
+        )
 
 @bot.message_handler(commands=['promo'])
 def ask_promo(message: Message):
